@@ -49,7 +49,11 @@ if uploaded_file is not None:
     if df is not None and not df.empty:
         st.success(f"解析成功！共匯入 {len(df)} 支樁位座標。")
 
-        # --- 3. 進度輸入區 (跳支與排序智慧版) ---
+        # 初始化 Session State，確保按下確認鍵後狀態不會因拉動側邊欄而消失
+        if 'active_piles' not in st.session_state:
+            st.session_state['active_piles'] = []
+
+        # --- 3. 進度輸入區 ---
         st.markdown("### 📝 今日進度與施作順序登錄")
         
         mode = st.radio(
@@ -62,33 +66,66 @@ if uploaded_file is not None:
         if "4支" in mode: step = 4
         elif "3支" in mode: step = 3
 
-        st.caption(f"💡 提示：請直接輸入數字或區間 (如 1-100)，系統會自動補 P 並依每 {step} 支跳號點亮。")
-        completed_input = st.text_input("輸入完成樁號區間：")
+        # 建立兩個分頁供選擇輸入模式
+        tab1, tab2 = st.tabs(["🎯 起點自動推算模式", "✏️ 自由輸入模式 (區間/混合)"])
 
-        completed_ordered_list = []
-        if completed_input:
-            clean_input = re.sub(r'[pP]', '', completed_input)
-            raw_items = re.split(r'[,\s]+', clean_input.strip())
-            
-            for item in raw_items:
-                if not item: continue
-                
-                if '-' in item:
-                    parts = item.split('-')
-                    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                        start, end = int(parts[0]), int(parts[1])
-                        # 依照輸入順序與步長生成
-                        rng = range(start, end + 1, step) if start <= end else range(start, end - 1, -step)
-                        for i in rng:
-                            p_id = f"P{i}"
-                            if p_id not in completed_ordered_list:
-                                completed_ordered_list.append(p_id)
-                elif item.isdigit():
-                    p_id = f"P{item}"
-                    if p_id not in completed_ordered_list:
-                        completed_ordered_list.append(p_id)
-        
-        # 建立順序對照表
+        with tab1:
+            with st.form("calc_form"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    start_num = st.number_input("起始樁號 (數字)", min_value=1, value=1, step=1)
+                with col2:
+                    direction = st.radio("施作方向", ["編號遞增 (+)", "編號遞減 (-)"])
+                with col3:
+                    count = st.number_input("預計施作數量 (支)", min_value=1, value=10, step=1)
+
+                submit_calc = st.form_submit_button("✅ 確認執行")
+
+                if submit_calc:
+                    temp_list = []
+                    current_num = start_num
+                    for _ in range(count):
+                        if current_num < 1:
+                            break
+                        p_id = f"P{current_num}"
+                        if p_id not in temp_list:
+                            temp_list.append(p_id)
+                        
+                        if "遞增" in direction:
+                            current_num += step
+                        else:
+                            current_num -= step
+                    st.session_state['active_piles'] = temp_list
+
+        with tab2:
+            with st.form("free_form"):
+                completed_input = st.text_input("輸入完成樁號區間 (例如: 1-100)：")
+                submit_free = st.form_submit_button("✅ 確認執行")
+
+                if submit_free:
+                    temp_list = []
+                    if completed_input:
+                        clean_input = re.sub(r'[pP]', '', completed_input)
+                        raw_items = re.split(r'[,\s]+', clean_input.strip())
+                        
+                        for item in raw_items:
+                            if not item: continue
+                            
+                            if '-' in item:
+                                parts = item.split('-')
+                                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                                    s_num, e_num = int(parts[0]), int(parts[1])
+                                    rng = range(s_num, e_num + 1, step) if s_num <= e_num else range(s_num, e_num - 1, -step)
+                                    for i in rng:
+                                        p_id = f"P{i}"
+                                        if p_id not in temp_list: temp_list.append(p_id)
+                            elif item.isdigit():
+                                p_id = f"P{item}"
+                                if p_id not in temp_list: temp_list.append(p_id)
+                    st.session_state['active_piles'] = temp_list
+
+        # 從 Session State 讀取目前欲著色的樁號清單
+        completed_ordered_list = st.session_state['active_piles']
         seq_map = {p_id: i + 1 for i, p_id in enumerate(completed_ordered_list)}
 
         # --- 4. 資料處理與動態標籤 ---
@@ -96,7 +133,6 @@ if uploaded_file is not None:
         df['施作順序'] = df['樁號大寫'].map(seq_map)
         df['狀態'] = df['施作順序'].apply(lambda x: '今日完成' if pd.notnull(x) else '未完成')
         
-        # 產生顯示標籤：若完成則顯示 "P1 (1)"，未完成則顯示 "P1"
         def make_label(row):
             if row['狀態'] == '今日完成':
                 return f"{row['樁號']} ({int(row['施作順序'])})"
@@ -104,12 +140,23 @@ if uploaded_file is not None:
         
         df['顯示標籤'] = df.apply(make_label, axis=1)
 
-        # --- 5. 繪製視覺化圖面 ---
-        st.sidebar.header("圖面設定")
+        # --- 5. 繪製視覺化圖面與裁切設定 ---
+        st.sidebar.header("🛠️ 圖面設定與裁切")
         plot_height = st.sidebar.slider("圖面放大倍率 (高度)", 500, 2500, 800, 100)
 
+        st.sidebar.markdown("***")
+        st.sidebar.subheader("✂️ 濾除 CAD 雜訊")
+        
+        x_min_val, x_max_val = float(df['X'].min()), float(df['X'].max())
+        y_min_val, y_max_val = float(df['Y'].min()), float(df['Y'].max())
+
+        x_range = st.sidebar.slider("X 軸範圍限制", x_min_val, x_max_val, (x_min_val, x_max_val))
+        y_range = st.sidebar.slider("Y 軸範圍限制", y_min_val, y_max_val, (y_min_val, y_max_val))
+
+        df_plot = df[(df['X'] >= x_range[0]) & (df['X'] <= x_range[1]) & (df['Y'] >= y_range[0]) & (df['Y'] <= y_range[1])].copy()
+
         fig = px.scatter(
-            df, x='X', y='Y', 
+            df_plot, x='X', y='Y', 
             text='顯示標籤', 
             color='狀態',
             color_discrete_map={'未完成': 'lightgrey', '今日完成': 'red'},
@@ -122,24 +169,24 @@ if uploaded_file is not None:
             textfont=dict(size=12, color='black') 
         )
         
-        # 緊縮座標軸消除白邊
-        x_min, x_max = df['X'].min(), df['X'].max()
-        y_min, y_max = df['Y'].min(), df['Y'].max()
-        x_margin, y_margin = (x_max - x_min) * 0.05, (y_max - y_min) * 0.05
+        if not df_plot.empty:
+            x_min, x_max = df_plot['X'].min(), df_plot['X'].max()
+            y_min, y_max = df_plot['Y'].min(), df_plot['Y'].max()
+            x_margin, y_margin = (x_max - x_min) * 0.05, (y_max - y_min) * 0.05
 
-        fig.update_layout(
-            xaxis=dict(range=[x_min - x_margin, x_max + x_margin], visible=False, showgrid=False), 
-            yaxis=dict(range=[y_min - y_margin, y_max + y_margin], scaleanchor="x", scaleratio=1, visible=False, showgrid=False),
-            plot_bgcolor='white', 
-            margin=dict(l=0, r=0, t=0, b=0), 
-            height=plot_height,
-            legend=dict(title="施工狀態", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
+            fig.update_layout(
+                xaxis=dict(range=[x_min - x_margin, x_max + x_margin], visible=False, showgrid=False), 
+                yaxis=dict(range=[y_min - y_margin, y_max + y_margin], scaleanchor="x", scaleratio=1, visible=False, showgrid=False),
+                plot_bgcolor='white', 
+                margin=dict(l=0, r=0, t=0, b=0), 
+                height=plot_height,
+                legend=dict(title="施工狀態", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
 
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-        # 6. 進度統計
-        valid_completed = len(df[df['狀態'] == '今日完成'])
+        # --- 6. 進度統計 ---
+        valid_completed = len(df_plot[df_plot['狀態'] == '今日完成'])
         st.metric(label="✅ 今日預計完成數量", value=valid_completed)
         
     else:
