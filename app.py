@@ -5,49 +5,52 @@ import re
 import datetime
 
 st.set_page_config(page_title="排樁進度管理系統", layout="wide")
-st.title("UN023 排樁工程進度自動化儀表板")
+st.title("UN023 排樁工程進度管理系統")
 
-# --- 1. 自動讀取底圖 (從 GitHub 讀取) ---
+# 1. 自動讀取底圖（從 GitHub 專案目錄讀取）
 @st.cache_data
 def load_base_data():
+    base_filename = '排樁座標.csv'
     try:
         try:
-            df = pd.read_csv('排樁座標.csv', encoding='utf-8')
+            df = pd.read_csv(base_filename, encoding='utf-8')
         except UnicodeDecodeError:
-            df = pd.read_csv('排樁座標.csv', encoding='big5')
+            df = pd.read_csv(base_filename, encoding='big5')
     except FileNotFoundError:
         return None
     
+    # 尋找座標與內容欄位
     x_col = next((col for col in df.columns if 'X' in col.upper()), None)
     y_col = next((col for col in df.columns if 'Y' in col.upper()), None)
     text_col = next((col for col in df.columns if '內容' in col or '值' in col or 'VALUE' in col.upper()), None)
 
     if not (x_col and y_col and text_col): return None
 
-    def clean_autocad_text(text):
+    # 清理 AutoCAD 格式文字
+    def clean_text(text):
         if not isinstance(text, str): return str(text)
         text = re.sub(r'\\[^;]+;', '', text)
         text = re.sub(r'[{}]', '', text)
         return text.strip()
 
-    df['樁號'] = df[text_col].apply(clean_autocad_text)
-    pile_pattern = re.compile(r'^[A-Za-z]\-?\d+$')
-    df_piles = df[df['樁號'].apply(lambda x: bool(pile_pattern.match(x)))].copy()
+    df['樁號'] = df[text_col].apply(clean_text)
+    # 統一樁號格式並篩選
+    df['樁號大寫'] = df['樁號'].str.upper().str.strip()
+    df_piles = df[df['樁號大寫'].str.match(r'^P\d+$')].copy()
     
     df_piles['X'] = pd.to_numeric(df_piles[x_col], errors='coerce')
     df_piles['Y'] = pd.to_numeric(df_piles[y_col], errors='coerce')
-    df_piles['樁號大寫'] = df_piles['樁號'].str.upper().str.strip()
     return df_piles.dropna(subset=['X', 'Y'])
 
 df_base = load_base_data()
 
 if df_base is None:
-    st.error("找不到『排樁座標.csv』。請確認已將檔案上傳至 GitHub 專案庫中。")
+    st.error("找不到底圖檔案。請確認『排樁座標.csv』已上傳至 GitHub。")
     st.stop()
 
-# --- 2. 歷史進度管理 (側邊欄) ---
-st.sidebar.header("📂 進度檔案管理")
-history_file = st.sidebar.file_uploader("匯入歷史進度存檔 (CSV)", type="csv")
+# 2. 進度檔案管理
+st.sidebar.header("📂 進度存檔管理")
+history_file = st.sidebar.file_uploader("匯入昨日進度存檔 (CSV)", type="csv")
 
 if 'history' not in st.session_state:
     st.session_state['history'] = []
@@ -55,45 +58,48 @@ if 'history' not in st.session_state:
 if history_file is not None:
     df_hist = pd.read_csv(history_file)
     st.session_state['history'] = df_hist.to_dict('records')
-    st.sidebar.success("✅ 歷史進度已成功匯入！")
+    st.sidebar.success("✅ 歷史紀錄已匯入")
 
-# 匯出進度按鈕
+# 下載按鈕
 if st.session_state['history']:
-    df_download = pd.DataFrame(st.session_state['history'])
-    csv_data = df_download.to_csv(index=False).encode('utf-8-sig')
+    df_dl = pd.DataFrame(st.session_state['history'])
+    csv_data = df_dl.to_csv(index=False).encode('utf-8-sig')
     st.sidebar.download_button(
-        label="💾 下載最新進度存檔 (收工前務必下載)",
+        label="💾 下載最新進度存檔",
         data=csv_data,
-        file_name=f"排樁進度紀錄_{datetime.date.today()}.csv",
+        file_name=f"排樁進度_{datetime.date.today()}.csv",
         mime="text/csv"
     )
 
-st.sidebar.markdown("***")
+if st.sidebar.button("🗑️ 清空本次所有紀錄"):
+    st.session_state['history'] = []
+    st.rerun()
 
-# --- 3. 今日進度登錄 ---
+# 3. 施工登錄介面
 st.markdown("### 📝 施工進度登錄")
-
 col_date, col_mode = st.columns([1, 3])
 with col_date:
-    today_date = st.date_input("施工日期")
+    today_date = st.date_input("施工日期", datetime.date.today())
 with col_mode:
-    mode = st.radio("施工模式：", ["連續施工 (1, 2...)", "4支一循環 (1, 5...)", "3支一循環 (1, 4...)"], horizontal=True)
+    mode = st.radio("施工模式：", ["連續 (1, 2...)", "4支循環 (1, 5...)", "3支循環 (1, 4...)"], horizontal=True)
 
 step = 1
 if "4支" in mode: step = 4
 elif "3支" in mode: step = 3
 
-tab1, tab2 = st.tabs(["🎯 起點自動推算模式", "✏️ 自由輸入模式 (區間)"])
-
-# 處理紀錄寫入的函數
 def process_piles(pile_list):
     current_max_seq = 0
     if st.session_state['history']:
         current_max_seq = max([item['施作順序'] for item in st.session_state['history']])
     
-    added_count = 0
+    added = 0
     for p_id in pile_list:
-        # 檢查是否已存在紀錄中
+        # 樁號上限 613
+        p_num_match = re.search(r'\d+', p_id)
+        if p_num_match and int(p_num_match.group()) > 613:
+            continue
+        
+        # 檢查是否重複
         if not any(x['樁號'] == p_id for x in st.session_state['history']):
             current_max_seq += 1
             st.session_state['history'].append({
@@ -101,119 +107,78 @@ def process_piles(pile_list):
                 '施工日期': str(today_date),
                 '施作順序': current_max_seq
             })
-            added_count += 1
-    return added_count
+            added += 1
+    return added
 
-with tab1:
-    with st.form("calc_form"):
+t1, t2 = st.tabs(["🎯 起點自動推算", "✏️ 手動區間輸入"])
+
+with t1:
+    with st.form("auto_form"):
         c1, c2, c3 = st.columns(3)
-        with c1: start_num = st.number_input("起始樁號數字", min_value=1, value=1, step=1)
-        with c2: direction = st.radio("方向", ["編號遞增 (+)", "編號遞減 (-)"])
-        with c3: count = st.number_input("預計施作數量", min_value=1, value=10, step=1)
-
-        if st.form_submit_button("✅ 寫入進度"):
-            temp_list = []
+        start_num = c1.number_input("起始數字", min_value=1, max_value=613, value=1)
+        direction = c2.radio("方向", ["遞增 (+)", "遞減 (-)"])
+        count = c3.number_input("施作支數", min_value=1, value=10)
+        if st.form_submit_button("✅ 確認執行"):
+            piles = []
             curr = start_num
             for _ in range(count):
-                if curr < 1: break
-                p_id = f"P{curr}"
-                if p_id not in temp_list: temp_list.append(p_id)
+                if curr < 1 or curr > 613: break
+                piles.append(f"P{curr}")
                 curr = curr + step if "遞增" in direction else curr - step
-            
-            added = process_piles(temp_list)
-            st.success(f"已記錄！今日新增 {added} 支樁。")
+            added = process_piles(piles)
+            st.success(f"成功記錄 {added} 支樁")
 
-with tab2:
-    with st.form("free_form"):
-        completed_input = st.text_input("輸入完成樁號區間 (如: 1-100, 105)：")
-        if st.form_submit_button("✅ 寫入進度"):
-            temp_list = []
-            if completed_input:
-                clean_input = re.sub(r'[pP]', '', completed_input)
-                raw_items = re.split(r'[,\s]+', clean_input.strip())
-                for item in raw_items:
-                    if not item: continue
+with t2:
+    with st.form("manual_form"):
+        raw_input = st.text_input("輸入區間 (如 1-50, 60)：")
+        if st.form_submit_button("✅ 確認執行"):
+            piles = []
+            if raw_input:
+                items = re.split(r'[,\s]+', re.sub(r'[pP]', '', raw_input).strip())
+                for item in items:
                     if '-' in item:
-                        parts = item.split('-')
-                        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                            s_num, e_num = int(parts[0]), int(parts[1])
-                            rng = range(s_num, e_num + 1, step) if s_num <= e_num else range(s_num, e_num - 1, -step)
-                            for i in rng:
-                                p_id = f"P{i}"
-                                if p_id not in temp_list: temp_list.append(p_id)
+                        p = item.split('-')
+                        if len(p) == 2:
+                            s, e = int(p[0]), int(p[1])
+                            rng = range(s, e + 1, step) if s <= e else range(s, e - 1, -step)
+                            for i in rng: piles.append(f"P{i}")
                     elif item.isdigit():
-                        p_id = f"P{item}"
-                        if p_id not in temp_list: temp_list.append(p_id)
-            
-            added = process_piles(temp_list)
-            st.success(f"已記錄！今日新增 {added} 支樁。")
+                        piles.append(f"P{item}")
+            added = process_piles(piles)
+            st.success(f"成功記錄 {added} 支樁")
 
-# --- 4. 資料合併與動態標籤 ---
+# 4. 資料合併與圖面顯示
 df_plot = df_base.copy()
-df_plot['狀態'] = '未完成'
-df_plot['施作順序'] = None
-df_plot['顯示標籤'] = df_plot['樁號']
-
 if st.session_state['history']:
     df_hist = pd.DataFrame(st.session_state['history'])
-    # 將歷史紀錄合併至底圖
-    df_plot = df_plot.merge(df_hist, left_on='樁號大寫', right_on='樁號', how='left', suffixes=('', '_hist'))
-    
-    # 狀態改為施工日期
+    df_plot = df_plot.merge(df_hist, left_on='樁號大寫', right_on='樁號', how='left', suffixes=('', '_h'))
     df_plot['狀態'] = df_plot['施工日期'].fillna('未完成')
-    df_plot['施作順序'] = df_plot['施作順序']
-    
-    def make_label(row):
-        if pd.notna(row['施作順序']):
-            return f"{row['樁號']} ({int(row['施作順序'])})"
-        return row['樁號']
-    
-    df_plot['顯示標籤'] = df_plot.apply(make_label, axis=1)
+    df_plot['標籤'] = df_plot.apply(lambda r: f"{r['樁號']} ({int(r['施作順序'])})" if pd.notna(r['施作順序']) else r['樁號'], axis=1)
+else:
+    df_plot['狀態'] = '未完成'
+    df_plot['標籤'] = df_plot['樁號']
 
-# --- 5. 繪製視覺化圖面與裁切設定 ---
-st.sidebar.header("🛠️ 圖面裁切設定")
-x_min_val, x_max_val = float(df_base['X'].min()), float(df_base['X'].max())
-y_min_val, y_max_val = float(df_base['Y'].min()), float(df_base['Y'].max())
-
-x_range = st.sidebar.slider("X 軸範圍", x_min_val, x_max_val, (x_min_val, x_max_val))
-y_range = st.sidebar.slider("Y 軸範圍", y_min_val, y_max_val, (y_min_val, y_max_val))
-
-df_final = df_plot[(df_plot['X'] >= x_range[0]) & (df_plot['X'] <= x_range[1]) & (df_plot['Y'] >= y_range[0]) & (df_plot['Y'] <= y_range[1])]
-
-# 確保 '未完成' 永遠是灰色，其他日期交由 Plotly 自動分配顏色
-color_map = {'未完成': 'lightgrey'}
+# 5. 繪製
+st.sidebar.markdown("***")
+h = st.sidebar.slider("畫布高度", 500, 2500, 800)
 
 fig = px.scatter(
-    df_final, x='X', y='Y', text='顯示標籤', color='狀態',
-    color_discrete_map=color_map,
-    hover_data={'X': False, 'Y': False, '顯示標籤': False}
+    df_plot, x='X', y='Y', text='標籤', color='狀態',
+    color_discrete_map={'未完成': 'lightgrey'},
+    hover_data={'X': False, 'Y': False, '標籤': False}
 )
 
-fig.update_traces(
-    textposition='top center', 
-    marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey')), 
-    textfont=dict(size=12, color='black') 
+fig.update_traces(textposition='top center', marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey')))
+fig.update_layout(
+    xaxis=dict(visible=False, showgrid=False),
+    yaxis=dict(scaleanchor="x", scaleratio=1, visible=False, showgrid=False),
+    plot_bgcolor='white', margin=dict(l=0, r=0, t=0, b=0), height=h
 )
-
-if not df_final.empty:
-    x_min, x_max = df_final['X'].min(), df_final['X'].max()
-    y_min, y_max = df_final['Y'].min(), df_final['Y'].max()
-    x_margin, y_margin = (x_max - x_min) * 0.05, (y_max - y_min) * 0.05
-
-    fig.update_layout(
-        xaxis=dict(range=[x_min - x_margin, x_max + x_margin], visible=False, showgrid=False), 
-        yaxis=dict(range=[y_min - y_margin, y_max + y_margin], scaleanchor="x", scaleratio=1, visible=False, showgrid=False),
-        plot_bgcolor='white', margin=dict(l=0, r=0, t=0, b=0), height=850,
-        legend=dict(title="施工日期", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
 
 st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-# --- 6. 進度統計 ---
-today_str = str(today_date)
-today_completed = len(df_final[df_final['狀態'] == today_str])
-total_completed = len(df_final[df_final['狀態'] != '未完成'])
-
+# 6. 統計
+st.markdown(f"### 📊 統計摘要 (截至 {today_date})")
 c1, c2 = st.columns(2)
-c1.metric(label=f"📅 {today_str} 完成數量", value=today_completed)
-c2.metric(label="✅ 累計總完成數量", value=total_completed)
+c1.metric("今日進度", len(df_plot[df_plot['狀態'] == str(today_date)]))
+c2.metric("累計總完成", len(df_plot[df_plot['狀態'] != '未完成']))
