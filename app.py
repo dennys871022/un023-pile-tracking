@@ -64,31 +64,39 @@ if uploaded_file is not None:
         df['樁號大寫'] = df['樁號'].str.upper()
         df['狀態'] = df['樁號大寫'].apply(lambda x: '今日完成' if x in completed_list else '未完成')
 
-        # 5. 繪製視覺化圖面
+# 5. 繪製視覺化圖面
+        # 計算圖形的長寬分佈，自動決定最佳畫布高度，消除過多白邊
+        x_spread = df['X'].max() - df['X'].min()
+        y_spread = df['Y'].max() - df['Y'].min()
+        aspect_ratio = y_spread / x_spread if x_spread > 0 else 1
+        
+        # 以網頁可用寬度約 900px 為基準，推算合理的動態高度
+        dynamic_height = max(500, min(1200, int(900 * aspect_ratio)))
+
         fig = px.scatter(
             df, x='X', y='Y', text='樁號', color='狀態',
             color_discrete_map={'未完成': 'lightgrey', '今日完成': 'red'},
             hover_data={'X': False, 'Y': False, '樁號大寫': False}
         )
         
-        # 設定標籤顯示與樣式
+        # 微調標記大小與字體，避免全區圖的文字過度重疊
         fig.update_traces(
             textposition='top center', 
-            marker=dict(size=12, line=dict(width=1, color='DarkSlateGrey')),
-            textfont=dict(size=11, color='black')
+            marker=dict(size=8, line=dict(width=1, color='DarkSlateGrey')), 
+            textfont=dict(size=10, color='black') 
         )
         
-        # 隱藏坐標軸，並強制 1:1 長寬比 (保證工程圖不變形)
         fig.update_layout(
-            xaxis_visible=False, 
-            yaxis_visible=False, 
+            xaxis=dict(visible=False), 
+            yaxis=dict(visible=False, scaleanchor="x", scaleratio=1),
             plot_bgcolor='white', 
-            height=850,
-            yaxis=dict(scaleanchor="x", scaleratio=1),
+            margin=dict(l=0, r=0, t=40, b=0), # 將四周系統預設的白邊歸零
+            height=dynamic_height,            # 套用動態計算的最佳高度
             legend=dict(title="施工狀態", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        # 啟動雙擊重置畫面大小的功能
+        st.plotly_chart(fig, use_container_width=True, config={'doubleClick': 'reset'})
 
         # 6. 進度統計
         valid_completed = len(df[df['狀態'] == '今日完成'])
