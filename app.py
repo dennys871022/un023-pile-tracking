@@ -63,15 +63,18 @@ if uploaded_file is not None:
         # 4. 更新圖面狀態
         df['樁號大寫'] = df['樁號'].str.upper()
         df['狀態'] = df['樁號大寫'].apply(lambda x: '今日完成' if x in completed_list else '未完成')
-
-# 5. 繪製視覺化圖面
-        # 計算圖形的長寬分佈，自動決定最佳畫布高度，消除過多白邊
-        x_spread = df['X'].max() - df['X'].min()
-        y_spread = df['Y'].max() - df['Y'].min()
-        aspect_ratio = y_spread / x_spread if x_spread > 0 else 1
+# --- 5. 繪製視覺化圖面 ---
         
-        # 以網頁可用寬度約 900px 為基準，推算合理的動態高度
-        dynamic_height = max(500, min(1200, int(900 * aspect_ratio)))
+        # 在側邊欄加入一個手動縮放控制
+        st.sidebar.header("圖面設定")
+        plot_height = st.sidebar.slider("圖面放大倍率 (高度)", min_value=500, max_value=2500, value=1000, step=100)
+
+        # 計算資料邊界，強行緊縮
+        x_min, x_max = df['X'].min(), df['X'].max()
+        y_min, y_max = df['Y'].min(), df['Y'].max()
+        # 增加 2% 的微小邊距避免點被切到
+        x_margin = (x_max - x_min) * 0.02
+        y_margin = (y_max - y_min) * 0.02
 
         fig = px.scatter(
             df, x='X', y='Y', text='樁號', color='狀態',
@@ -79,25 +82,50 @@ if uploaded_file is not None:
             hover_data={'X': False, 'Y': False, '樁號大寫': False}
         )
         
-        # 微調標記大小與字體，避免全區圖的文字過度重疊
         fig.update_traces(
             textposition='top center', 
-            marker=dict(size=8, line=dict(width=1, color='DarkSlateGrey')), 
-            textfont=dict(size=10, color='black') 
+            marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey')), 
+            textfont=dict(size=12, color='black') 
         )
         
         fig.update_layout(
-            xaxis=dict(visible=False), 
-            yaxis=dict(visible=False, scaleanchor="x", scaleratio=1),
+            # 強制 X 軸範圍
+            xaxis=dict(
+                range=[x_min - x_margin, x_max + x_margin],
+                visible=False,
+                showgrid=False
+            ), 
+            # 強制 Y 軸範圍並鎖定 1:1
+            yaxis=dict(
+                range=[y_min - y_margin, y_max + y_margin],
+                scaleanchor="x", 
+                scaleratio=1,
+                visible=False,
+                showgrid=False
+            ),
             plot_bgcolor='white', 
-            margin=dict(l=0, r=0, t=40, b=0), # 將四周系統預設的白邊歸零
-            height=dynamic_height,            # 套用動態計算的最佳高度
-            legend=dict(title="施工狀態", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            margin=dict(l=0, r=0, t=0, b=0), # 全域邊距歸零
+            height=plot_height,              # 使用滑桿控制的高度
+            legend=dict(
+                title="施工狀態", 
+                orientation="h", 
+                yanchor="bottom", 
+                y=1.02, 
+                xanchor="right", 
+                x=1
+            )
         )
 
-        # 啟動雙擊重置畫面大小的功能
-        st.plotly_chart(fig, use_container_width=True, config={'doubleClick': 'reset'})
-
+        # 顯示圖表
+        st.plotly_chart(
+            fig, 
+            use_container_width=True, 
+            config={
+                'scrollZoom': True,      # 開啟滑輪縮放
+                'displayModeBar': True,  # 顯示工具列
+                'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraselayer']
+            }
+        )
         # 6. 進度統計
         valid_completed = len(df[df['狀態'] == '今日完成'])
         st.metric(label="✅ 今日已點亮樁數", value=valid_completed)
