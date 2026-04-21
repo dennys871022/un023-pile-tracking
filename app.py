@@ -6,7 +6,7 @@ import datetime
 import io
 import xlsxwriter.utility
 
-st.set_page_config(page_title="UN023 排樁進度系統 V6", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V7", layout="wide")
 st.title("🚧 UN023 排樁進度管理系統 (防覆蓋雙機版)")
 
 # --- 1. 座標底圖讀取 ---
@@ -45,7 +45,6 @@ st.sidebar.header("📂 數據導入")
 up_file = st.sidebar.file_uploader("1️⃣ 每日開工：導入歷史 Excel 報表", type=['csv', 'xlsx'])
 
 if up_file:
-    # 建立檔案專屬指紋，防止網頁重新整理時重複覆蓋新資料
     file_id = f"{up_file.name}_{up_file.size}"
     
     if st.session_state.get('loaded_file_id') != file_id:
@@ -58,7 +57,7 @@ if up_file:
             if '機台' not in df_up.columns: df_up['機台'] = 'A車'
             
             st.session_state['history'] = df_up.drop_duplicates(subset=['樁號']).to_dict('records')
-            st.session_state['loaded_file_id'] = file_id # 上鎖
+            st.session_state['loaded_file_id'] = file_id
             st.sidebar.success("✅ 歷史資料已讀取並鎖定！")
         except Exception as e:
             st.sidebar.error(f"讀取失敗，錯誤碼: {e}")
@@ -67,7 +66,7 @@ if up_file:
 
 if st.sidebar.button("🗑️ 清空網頁暫存"):
     st.session_state['history'] = []
-    st.session_state['loaded_file_id'] = None # 解鎖
+    st.session_state['loaded_file_id'] = None
     st.rerun()
 
 # --- 3. 施工作業登錄 ---
@@ -75,11 +74,10 @@ st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = str(c1.date_input("施工日期"))
 machine = c2.radio("施工機台：", ["A車", "B車"], horizontal=True)
-mode = c3.radio("模式：", ["連續", "4支循環", "3支循環"], horizontal=True)
+# 移除連續模式，僅保留跳支模式
+mode = c3.radio("模式：", ["4支一循環 (1, 5...)", "3支一循環 (1, 4...)"], horizontal=True)
 
-step = 1
-if "4支" in mode: step = 4
-elif "3支" in mode: step = 3
+step = 4 if "4支" in mode else 3
 
 def save_piles(piles):
     if not piles: return
