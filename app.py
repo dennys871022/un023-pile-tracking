@@ -10,7 +10,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="UN023 排樁進度系統", layout="wide")
-st.title("🚧 UN023 排樁進度管理系統 (全自動雲端版)")
+st.title("🚧 UN023 排樁進度管理系統 (雙軌備份版)")
 
 @st.cache_data
 def load_base_data():
@@ -49,7 +49,7 @@ def init_gspread():
     
     headers = sheet.row_values(1)
     if not headers:
-        sheet.append_row(['樁號', '施工日期', '機台', '施作順序'])
+        sheet.append_row(['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
     return sheet
 
 sheet = init_gspread()
@@ -58,15 +58,50 @@ def get_cloud_data():
     try:
         records = sheet.get_all_records()
         if not records:
-            return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序'])
+            return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
         df = pd.DataFrame(records)
         df['樁號'] = df['樁號'].astype(str).str.upper().str.strip()
         df['施作順序'] = pd.to_numeric(df['施作順序'], errors='coerce')
         return df
     except:
-        return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序'])
+        return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
 
 df_history = get_cloud_data()
+
+st.sidebar.header("📂 手動備份與還原機制")
+up_file = st.sidebar.file_uploader("匯入歷史進度 (Excel/CSV)", type=['csv', 'xlsx'])
+if up_file:
+    file_id = f"{up_file.name}_{up_file.size}"
+    if st.session_state.get('loaded_file') != file_id:
+        try:
+            if up_file.name.endswith('.csv'):
+                df_up = pd.read_csv(up_file)
+            else:
+                df_up = pd.read_excel(up_file, sheet_name='施工明細', engine='openpyxl')
+            
+            if '機台' not in df_up.columns: df_up['機台'] = 'A車'
+            
+            new_rows = []
+            cloud_piles = df_history['樁號'].tolist() if not df_history.empty else []
+            
+            for _, row in df_up.iterrows():
+                p = str(row['樁號']).upper().strip()
+                if p not in cloud_piles:
+                    base_row = df_base[df_base['樁號'] == p]
+                    x_val = float(base_row['X'].iloc[0]) if not base_row.empty else 0.0
+                    y_val = float(base_row['Y'].iloc[0]) if not base_row.empty else 0.0
+                    new_rows.append([p, str(row['施工日期']), str(row['機台']), int(row.get('施作順序', 1)), x_val, y_val])
+            
+            if new_rows:
+                sheet.append_rows(new_rows)
+                st.sidebar.success(f"成功還原 {len(new_rows)} 筆資料至雲端")
+            else:
+                st.sidebar.info("資料已同步，無缺漏")
+            
+            st.session_state['loaded_file'] = file_id
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"還原失敗: {e}")
 
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
@@ -86,9 +121,12 @@ def save_piles(piles):
     added = 0
     for p in piles:
         p = p.upper().strip()
-        if p not in df_history['樁號'].values:
+        if df_history.empty or p not in df_history['樁號'].values:
             seq += 1
-            new_rows.append([p, work_date, machine, int(seq)])
+            base_row = df_base[df_base['樁號'] == p]
+            x_val = float(base_row['X'].iloc[0]) if not base_row.empty else 0.0
+            y_val = float(base_row['Y'].iloc[0]) if not base_row.empty else 0.0
+            new_rows.append([p, work_date, machine, int(seq), x_val, y_val])
             added += 1
     
     if added > 0:
@@ -131,27 +169,27 @@ with tab_man:
 
 df_plot = df_base.copy()
 if not df_history.empty:
-    df_plot = df_plot.merge(df_history, on='樁號', how='left')
+    hist_clean = df_history.drop(columns=['X', 'Y', '標籤', '狀態'], errors='ignore')
+    df_plot = df_plot.merge(hist_clean, on='樁號', how='left')
     df_plot['狀態'] = df_plot['施工日期'].fillna('未完成')
     df_plot['標籤'] = df_plot.apply(lambda r: f"{r['樁號']}({r['機台'][0]}{int(r['施作順序'])})" if pd.notna(r['施作順序']) else r['樁號'], axis=1)
 else:
     df_plot['狀態'] = '未完成'
     df_plot['標籤'] = df_plot['樁號']
 
-fig = px.scatter(df_plot, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成':'lightgrey'})
+fig = px.scatter(df_plot, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成':'#A9A9A9'})
 fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(width=1, color='black')))
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=800, legend_title_text='施工日期')
 st.plotly_chart(fig, use_container_width=True)
 
-st.sidebar.markdown("### 📊 系統報表")
+st.sidebar.markdown("### 📊 報表與手動下載")
 st.sidebar.metric("雲端總完成數", len(df_history))
 
 if not df_history.empty:
-    def get_excel_report(history_df, base_df, full_plot_df):
+    def get_excel_report(history_df, full_plot_df):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_full = history_df.merge(base_df[['樁號', 'X', 'Y']], on='樁號', how='left')
-            df_full.to_excel(writer, sheet_name='施工明細', index=False)
+            history_df.to_excel(writer, sheet_name='施工明細', index=False)
             
             workbook = writer.book
             worksheet = workbook.add_worksheet('全區進度圖')
@@ -167,11 +205,11 @@ if not df_history.empty:
                     'name': '未完成',
                     'categories': ['全區進度圖', 1, col_idx, len(undone), col_idx],
                     'values':     ['全區進度圖', 1, col_idx+1, len(undone), col_idx+1],
-                    'marker':     {'type': 'circle', 'size': 4, 'fill': {'color': '#808080'}, 'border': {'color': '#808080'}}
+                    'marker':     {'type': 'circle', 'size': 4, 'fill': {'color': '#696969'}, 'border': {'color': '#696969'}}
                 })
                 col_idx += 3
             
-            dates = df_full['施工日期'].dropna().unique()
+            dates = history_df['施工日期'].dropna().unique()
             for d in sorted(dates):
                 date_data = full_plot_df[full_plot_df['施工日期'] == d].reset_index(drop=True)
                 if not date_data.empty:
@@ -199,7 +237,7 @@ if not df_history.empty:
             
         return output.getvalue()
 
-    excel_out = get_excel_report(df_history, df_base, df_plot)
+    excel_out = get_excel_report(df_history, df_plot)
     st.sidebar.download_button(
         label="📥 匯出 Excel 總報表",
         data=excel_out,
