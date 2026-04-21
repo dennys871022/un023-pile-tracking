@@ -6,7 +6,7 @@ import datetime
 import io
 import xlsxwriter.utility
 
-st.set_page_config(page_title="UN023 排樁進度系統 V5", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統", layout="wide")
 st.title("🚧 UN023 排樁進度管理系統 (日期換色+標籤全開版)")
 
 # --- 1. 座標底圖讀取 ---
@@ -57,7 +57,7 @@ if up_file:
         st.session_state['history'] = df_up.drop_duplicates(subset=['樁號']).to_dict('records')
         st.sidebar.success("✅ 歷史資料已成功同步！")
     except Exception as e:
-        st.sidebar.error(f"讀取失敗，請確認上傳的是前一天下載的系統報表。錯誤碼: {e}")
+        st.sidebar.error(f"讀取失敗，錯誤碼: {e}")
 
 if st.sidebar.button("🗑️ 清空網頁暫存"):
     st.session_state['history'] = []
@@ -135,6 +135,9 @@ with tab_man:
 df_plot = df_base.copy()
 if st.session_state['history']:
     df_h = pd.DataFrame(st.session_state['history'])
+    # 核心修復：強制刪除上傳檔案中帶有的 X, Y 座標，避免欄位重疊衝突
+    df_h = df_h.drop(columns=['X', 'Y', '標籤', '狀態'], errors='ignore')
+    
     df_plot = df_plot.merge(df_h, on='樁號', how='left')
     df_plot['狀態'] = df_plot['施工日期'].fillna('未完成')
     # 產生 P100(A1) 格式標籤
@@ -156,6 +159,8 @@ if st.session_state['history']:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             # 1. 施工明細分頁
             df_exp = pd.DataFrame(history_list)
+            # 先清掉可能存在的舊座標，再與底圖座標合併
+            df_exp = df_exp.drop(columns=['X', 'Y'], errors='ignore')
             df_full = df_exp.merge(base_df[['樁號', 'X', 'Y']], on='樁號', how='left')
             df_full.to_excel(writer, sheet_name='施工明細', index=False)
             
@@ -181,7 +186,7 @@ if st.session_state['history']:
                 col_idx += 3
             
             # 處理已完成資料 (依日期迴圈)
-            dates = df_full['施工日期'].unique()
+            dates = df_full['施工日期'].dropna().unique()
             for d in sorted(dates):
                 date_data = full_plot_df[full_plot_df['施工日期'] == d].reset_index(drop=True)
                 if not date_data.empty:
@@ -200,7 +205,7 @@ if st.session_state['history']:
                         'categories': ['全區進度圖', 1, col_idx, len(date_data), col_idx],
                         'values':     ['全區進度圖', 1, col_idx+1, len(date_data), col_idx+1],
                         'marker':     {'type': 'circle', 'size': 7},
-                        'data_labels': {'custom': custom_labels, 'position': 'above'} # 顯示客製化標籤
+                        'data_labels': {'custom': custom_labels, 'position': 'above'}
                     })
                     col_idx += 4
             
