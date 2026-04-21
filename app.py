@@ -5,9 +5,12 @@ import re
 import datetime
 import io
 import xlsxwriter.utility
+import json
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統 V7", layout="wide")
-st.title("🚧 UN023 排樁進度管理系統")
+st.set_page_config(page_title="UN023 排樁進度系統", layout="wide")
+st.title("🚧 UN023 排樁進度管理系統 (全自動雲端版)")
 
 @st.cache_data
 def load_base_data():
@@ -36,36 +39,34 @@ def load_base_data():
 
 df_base = load_base_data()
 
-if 'history' not in st.session_state:
-    st.session_state['history'] = []
-
-st.sidebar.header("📂 數據導入")
-up_file = st.sidebar.file_uploader("1️⃣ 每日開工：導入歷史 Excel 報表", type=['csv', 'xlsx'])
-
-if up_file:
-    file_id = f"{up_file.name}_{up_file.size}"
+@st.cache_resource
+def init_gspread():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_dict = json.loads(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_url(st.secrets["sheet_url"]).sheet1
     
-    if st.session_state.get('loaded_file_id') != file_id:
-        try:
-            if up_file.name.endswith('.csv'):
-                df_up = pd.read_csv(up_file)
-            else:
-                df_up = pd.read_excel(up_file, sheet_name='施工明細', engine='openpyxl')
-            
-            if '機台' not in df_up.columns: df_up['機台'] = 'A車'
-            
-            st.session_state['history'] = df_up.drop_duplicates(subset=['樁號']).to_dict('records')
-            st.session_state['loaded_file_id'] = file_id
-            st.sidebar.success("✅ 歷史資料已讀取並鎖定！")
-        except Exception as e:
-            st.sidebar.error(f"讀取失敗，錯誤碼: {e}")
-    else:
-        st.sidebar.success("✅ 歷史資料保持同步中")
+    headers = sheet.row_values(1)
+    if not headers:
+        sheet.append_row(['樁號', '施工日期', '機台', '施作順序'])
+    return sheet
 
-if st.sidebar.button("🗑️ 清空網頁暫存"):
-    st.session_state['history'] = []
-    st.session_state['loaded_file_id'] = None
-    st.rerun()
+sheet = init_gspread()
+
+def get_cloud_data():
+    try:
+        records = sheet.get_all_records()
+        if not records:
+            return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序'])
+        df = pd.DataFrame(records)
+        df['樁號'] = df['樁號'].astype(str).str.upper().str.strip()
+        df['施作順序'] = pd.to_numeric(df['施作順序'], errors='coerce')
+        return df
+    except:
+        return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序'])
+
+df_history = get_cloud_data()
 
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
@@ -77,26 +78,23 @@ step = 4 if "4支" in mode else 3
 
 def save_piles(piles):
     if not piles: return
-    hist_df = pd.DataFrame(st.session_state['history']) if st.session_state['history'] else pd.DataFrame(columns=['樁號','機台','施作順序'])
     
-    m_data = hist_df[hist_df['機台'] == machine]
+    m_data = df_history[df_history['機台'] == machine]
     seq = 0 if m_data.empty else m_data['施作順序'].max()
     
+    new_rows = []
     added = 0
     for p in piles:
         p = p.upper().strip()
-        if not any(d['樁號'] == p for d in st.session_state['history']):
+        if p not in df_history['樁號'].values:
             seq += 1
-            st.session_state['history'].append({
-                '樁號': p,
-                '施工日期': work_date,
-                '機台': machine,
-                '施作順序': int(seq)
-            })
+            new_rows.append([p, work_date, machine, int(seq)])
             added += 1
     
     if added > 0:
-        st.success(f"✅ {machine} 已新增 {added} 支 (累計至 {seq})！")
+        sheet.append_rows(new_rows)
+        st.success(f"✅ 雲端同步完成：{machine} 新增 {added} 支。")
+        st.rerun()
     else:
         st.warning("⚠️ 這些樁號皆已登錄過，未重複寫入。")
 
@@ -132,11 +130,8 @@ with tab_man:
             save_piles(plist)
 
 df_plot = df_base.copy()
-if st.session_state['history']:
-    df_h = pd.DataFrame(st.session_state['history'])
-    df_h = df_h.drop(columns=['X', 'Y', '標籤', '狀態'], errors='ignore')
-    
-    df_plot = df_plot.merge(df_h, on='樁號', how='left')
+if not df_history.empty:
+    df_plot = df_plot.merge(df_history, on='樁號', how='left')
     df_plot['狀態'] = df_plot['施工日期'].fillna('未完成')
     df_plot['標籤'] = df_plot.apply(lambda r: f"{r['樁號']}({r['機台'][0]}{int(r['施作順序'])})" if pd.notna(r['施作順序']) else r['樁號'], axis=1)
 else:
@@ -148,14 +143,14 @@ fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(widt
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=800, legend_title_text='施工日期')
 st.plotly_chart(fig, use_container_width=True)
 
-st.sidebar.markdown("***")
-if st.session_state['history']:
-    def get_excel_report(history_list, base_df, full_plot_df):
+st.sidebar.markdown("### 📊 系統報表")
+st.sidebar.metric("雲端總完成數", len(df_history))
+
+if not df_history.empty:
+    def get_excel_report(history_df, base_df, full_plot_df):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_exp = pd.DataFrame(history_list)
-            df_exp = df_exp.drop(columns=['X', 'Y'], errors='ignore')
-            df_full = df_exp.merge(base_df[['樁號', 'X', 'Y']], on='樁號', how='left')
+            df_full = history_df.merge(base_df[['樁號', 'X', 'Y']], on='樁號', how='left')
             df_full.to_excel(writer, sheet_name='施工明細', index=False)
             
             workbook = writer.book
@@ -204,9 +199,9 @@ if st.session_state['history']:
             
         return output.getvalue()
 
-    excel_out = get_excel_report(st.session_state['history'], df_base, df_plot)
+    excel_out = get_excel_report(df_history, df_base, df_plot)
     st.sidebar.download_button(
-        label="📥 2️⃣ 收工：匯出 Excel 圖加表",
+        label="📥 匯出 Excel 總報表",
         data=excel_out,
         file_name=f"UN023_報表_{datetime.date.today()}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
