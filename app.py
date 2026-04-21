@@ -7,9 +7,8 @@ import io
 import xlsxwriter.utility
 
 st.set_page_config(page_title="UN023 排樁進度系統 V7", layout="wide")
-st.title("🚧 UN023 排樁進度管理系統 (防覆蓋雙機版)")
+st.title("🚧 UN023 排樁進度管理系統")
 
-# --- 1. 座標底圖讀取 ---
 @st.cache_data
 def load_base_data():
     try:
@@ -37,7 +36,6 @@ def load_base_data():
 
 df_base = load_base_data()
 
-# --- 2. 數據導入與管理 (加入指紋防護) ---
 if 'history' not in st.session_state:
     st.session_state['history'] = []
 
@@ -69,12 +67,10 @@ if st.sidebar.button("🗑️ 清空網頁暫存"):
     st.session_state['loaded_file_id'] = None
     st.rerun()
 
-# --- 3. 施工作業登錄 ---
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = str(c1.date_input("施工日期"))
 machine = c2.radio("施工機台：", ["A車", "B車"], horizontal=True)
-# 移除連續模式，僅保留跳支模式
 mode = c3.radio("模式：", ["4支一循環 (1, 5...)", "3支一循環 (1, 4...)"], horizontal=True)
 
 step = 4 if "4支" in mode else 3
@@ -135,7 +131,6 @@ with tab_man:
                     elif it.isdigit(): plist.append(f"P{it}")
             save_piles(plist)
 
-# --- 4. 網頁平面圖預覽 ---
 df_plot = df_base.copy()
 if st.session_state['history']:
     df_h = pd.DataFrame(st.session_state['history'])
@@ -153,19 +148,16 @@ fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(widt
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=800, legend_title_text='施工日期')
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 5. Excel 圖表報表匯出 ---
-st.sidebar.markdown("---")
+st.sidebar.markdown("***")
 if st.session_state['history']:
     def get_excel_report(history_list, base_df, full_plot_df):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # 1. 施工明細
             df_exp = pd.DataFrame(history_list)
             df_exp = df_exp.drop(columns=['X', 'Y'], errors='ignore')
             df_full = df_exp.merge(base_df[['樁號', 'X', 'Y']], on='樁號', how='left')
             df_full.to_excel(writer, sheet_name='施工明細', index=False)
             
-            # 2. 全區進度圖
             workbook = writer.book
             worksheet = workbook.add_worksheet('全區進度圖')
             writer.sheets['全區進度圖'] = worksheet
@@ -180,7 +172,7 @@ if st.session_state['history']:
                     'name': '未完成',
                     'categories': ['全區進度圖', 1, col_idx, len(undone), col_idx],
                     'values':     ['全區進度圖', 1, col_idx+1, len(undone), col_idx+1],
-                    'marker':     {'type': 'circle', 'size': 4, 'fill': {'color': '#E0E0E0'}, 'border': {'color': '#E0E0E0'}}
+                    'marker':     {'type': 'circle', 'size': 4, 'fill': {'color': '#808080'}, 'border': {'color': '#808080'}}
                 })
                 col_idx += 3
             
@@ -207,7 +199,7 @@ if st.session_state['history']:
             chart.set_title({'name': '排樁工程全區施工進度圖'})
             chart.set_x_axis({'visible': False})
             chart.set_y_axis({'visible': False, 'reverse': False})
-            chart.set_size({'width': 1200, 'height': 800})
+            chart.set_size({'width': 2400, 'height': 1400})
             worksheet.insert_chart('B2', chart)
             
         return output.getvalue()
