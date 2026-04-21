@@ -9,10 +9,10 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (雲端圖表自動同步版)")
+st.set_page_config(page_title="UN023 排樁雲端同步系統", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雲端圖表自動化版)")
 
-# --- 1. 座標底圖讀取 ---
+# --- 1. 底圖讀取 ---
 @st.cache_data
 def load_base_data():
     try:
@@ -29,10 +29,8 @@ def load_base_data():
         df = df[df['樁號'].str.match(r'^P\d+$')]
         df['數字'] = df['樁號'].str.extract(r'(\d+)').astype(int)
         df = df[(df['數字'] >= 1) & (df['數字'] <= 613)]
-        
         df['X'] = pd.to_numeric(df[x_col], errors='coerce')
         df['Y'] = pd.to_numeric(df[y_col], errors='coerce')
-        
         return df.drop_duplicates(subset=['樁號']).dropna(subset=['X', 'Y']).sort_values('數字')
     except Exception as e:
         st.error(f"底圖載入失敗: {e}")
@@ -40,7 +38,7 @@ def load_base_data():
 
 df_base = load_base_data()
 
-# --- 2. 雲端連線與圖表建立邏輯 ---
+# --- 2. 雲端服務 (gspread) 強化版 ---
 @st.cache_resource
 def init_gspread():
     try:
@@ -49,112 +47,89 @@ def init_gspread():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_url(st.secrets["sheet_url"])
-        sheet = spreadsheet.sheet1
         
-        headers = sheet.row_values(1)
-        if not headers:
-            sheet.append_row(['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
-        return spreadsheet, sheet
+        # 建立兩個分頁：明細與圖表數據
+        try:
+            sheet_main = spreadsheet.worksheet("施工明細")
+        except:
+            sheet_main = spreadsheet.add_worksheet("施工明細", 1000, 10)
+            sheet_main.append_row(['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
+            
+        try:
+            sheet_chart = spreadsheet.worksheet("進度圖表數據")
+        except:
+            sheet_chart = spreadsheet.add_worksheet("進度圖表數據", 700, 50)
+            
+        return spreadsheet, sheet_main, sheet_chart
     except Exception as e:
         st.error(f"雲端連線失敗: {e}")
-        return None, None
+        return None, None, None
 
-spreadsheet, sheet = init_gspread()
+spreadsheet, sheet_main, sheet_chart = init_gspread()
 
 def get_cloud_data():
-    if sheet is None: return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
+    if sheet_main is None: return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
     try:
-        records = sheet.get_all_records()
+        records = sheet_main.get_all_records()
         df = pd.DataFrame(records)
         df['樁號'] = df['樁號'].astype(str).str.upper().str.strip()
+        df['施作順序'] = pd.to_numeric(df['施作順序'], errors='coerce')
         return df
     except:
         return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
 
 df_history = get_cloud_data()
 
-# --- 3. 自動在 Google Sheets 建立 XY 圖表 ---
-def update_gs_chart():
-    if sheet is None: return
-    try:
-        # 獲取工作表 ID
-        sheet_id = sheet._properties['sheetId']
-        row_count = len(sheet.get_all_values())
-        if row_count < 2: return # 沒資料就不畫圖
+# --- 3. 核心功能：同步雲端試算表圖表 ---
+def sync_gs_visuals():
+    if not spreadsheet or df_history.empty: return
+    
+    # 重構數據區：讓 Excel/GSheets 能根據日期分顏色
+    dates = sorted(df_history['施工日期'].unique())
+    # 建立橫向結構：X, Y_日期1, Y_日期2...
+    chart_df = df_base[['樁號', 'X', 'Y']].copy()
+    for d in dates:
+        d_piles = df_history[df_history['施工日期'] == d][['樁號', 'Y']]
+        d_piles.columns = ['樁號', str(d)]
+        chart_df = chart_df.merge(d_piles, on='樁號', how='left')
+    
+    # 寫入圖表數據分頁 (隱藏數據區)
+    sheet_chart.clear()
+    sheet_chart.update([chart_df.columns.values.tolist()] + chart_df.fillna('').values.tolist())
+    
+    # 這裡可以手動在 Google Sheets 插入一次圖表，範圍選取 '進度圖表數據'!B1:Z614，它就會永遠自動更新顏色
 
-        # 定義圖表請求 (XY Scatter Chart)
-        requests = [{
-            "addChart": {
-                "chart": {
-                    "spec": {
-                        "title": "排樁施工進度圖 (雲端自動更新)",
-                        "basicChart": {
-                            "chartType": "SCATTER",
-                            "legendPosition": "BOTTOM_LEGEND",
-                            "axis": [
-                                {"position": "BOTTOM_AXIS", "title": "X 座標"},
-                                {"position": "LEFT_AXIS", "title": "Y 座標"}
-                            ],
-                            "domains": [{ # X 軸：E 欄 (index 4)
-                                "domain": {"sourceRange": {"sources": [{"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": row_count, "startColumnIndex": 4, "endColumnIndex": 5}]}}
-                            }],
-                            "series": [{ # Y 軸：F 欄 (index 5)
-                                "series": {"sourceRange": {"sources": [{"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": row_count, "startColumnIndex": 5, "endColumnIndex": 6}]}},
-                                "targetAxis": "LEFT_AXIS"
-                            }]
-                        }
-                    },
-                    "position": {
-                        "overlayPosition": {"anchorCell": {"sheetId": sheet_id, "rowIndex": 1, "columnIndex": 8}, "offsetXPixels": 0, "offsetYPixels": 0}
-                    }
-                }
-            }
-        }]
-        # 先刪除舊圖 (這步比較複雜，通常建議手動在試算表調好位置，API 會持續更新數據範圍)
-        # 為了簡化，我們主要確保數據範圍覆蓋全欄
-    except: pass
-
-# --- 4. 側邊欄：手動備份與還原 ---
-st.sidebar.header("📂 備份與還原機制")
+# --- 4. 施工作業登錄 ---
+st.sidebar.header("📂 數據備份與還原")
 up_file = st.sidebar.file_uploader("匯入歷史進度 (Excel/CSV)", type=['csv', 'xlsx'])
 if up_file:
     try:
-        if up_file.name.endswith('.csv'):
-            df_up = pd.read_csv(up_file)
-        else:
-            df_up = pd.read_excel(up_file, sheet_name='施工明細', engine='openpyxl')
-        
+        df_up = pd.read_excel(up_file, sheet_name='施工明細') if up_file.name.endswith('.xlsx') else pd.read_csv(up_file)
         new_rows = []
         current_piles = df_history['樁號'].tolist()
         for _, row in df_up.iterrows():
             p = str(row['樁號']).upper().strip()
             if p not in current_piles:
-                base_info = df_base[df_base['樁號'] == p]
-                x_v = base_info['X'].iloc[0] if not base_info.empty else 0
-                y_v = base_info['Y'].iloc[0] if not base_info.empty else 0
-                new_rows.append([p, str(row['施工日期']), str(row.get('機台', 'A車')), int(row.get('施作順序', 1)), x_v, y_v])
-        
+                base = df_base[df_base['樁號'] == p]
+                x, y = (base['X'].iloc[0], base['Y'].iloc[0]) if not base.empty else (0,0)
+                new_rows.append([p, str(row['施工日期']), str(row.get('機台','A車')), int(row.get('施作順序',1)), x, y])
         if new_rows:
-            sheet.append_rows(new_rows)
-            st.sidebar.success(f"成功同步 {len(new_rows)} 筆至雲端")
+            sheet_main.append_rows(new_rows)
+            st.sidebar.success(f"已同步 {len(new_rows)} 筆至雲端")
             st.rerun()
-    except Exception as e:
-        st.sidebar.error(f"匯入失敗: {e}")
+    except Exception as e: st.sidebar.error(f"還原失敗: {e}")
 
-# --- 5. 進度登錄 ---
-st.markdown("### 📝 施工進度登錄")
+st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = str(c1.date_input("日期"))
 machine = c2.radio("施工機台", ["A車", "B車"], horizontal=True)
 mode = c3.radio("模式", ["4支一循環", "3支一循環"], horizontal=True)
-
 step = 4 if "4支" in mode else 3
 
 def save_to_cloud(piles):
-    if not piles or sheet is None: return
+    if not piles or sheet_main is None: return
     m_data = df_history[df_history['機台'] == machine]
-    seq = 0 if m_data.empty else pd.to_numeric(m_data['施作順序']).max()
-    
+    seq = 0 if m_data.empty else m_data['施作順序'].max()
     new_data = []
     for p in piles:
         p = p.upper().strip()
@@ -163,10 +138,10 @@ def save_to_cloud(piles):
             base = df_base[df_base['樁號'] == p]
             x, y = (base['X'].iloc[0], base['Y'].iloc[0]) if not base.empty else (0, 0)
             new_data.append([p, work_date, machine, int(seq), float(x), float(y)])
-    
     if new_data:
-        sheet.append_rows(new_data)
-        st.success(f"✅ 雲端同步完成！")
+        sheet_main.append_rows(new_data)
+        sync_gs_visuals() # 更新雲端圖表數據區
+        st.success("✅ 雲端同步完成！")
         st.rerun()
 
 tab1, tab2 = st.tabs(["🎯 起點推算", "✏️ 手動輸入"])
@@ -176,18 +151,17 @@ with tab1:
         s_p = sc1.number_input("起始 P", 1, 613, 1)
         direct = sc2.radio("方向", ["遞增", "遞減"])
         count = sc3.number_input("數量", 1, 100, 10)
-        if st.form_submit_button("執行登錄"):
+        if st.form_submit_button("確認登錄"):
             plist = []
             curr = s_p
             for _ in range(count):
                 if 1 <= curr <= 613: plist.append(f"P{curr}")
                 curr = curr + step if direct == "遞增" else curr - step
             save_to_cloud(plist)
-
 with tab2:
     with st.form("manual"):
         raw_in = st.text_input("輸入區間 (如: 1-50)")
-        if st.form_submit_button("執行登錄"):
+        if st.form_submit_button("確認登錄"):
             plist = []
             if raw_in:
                 parts = re.split(r'[,\s]+', re.sub(r'[pP]', '', raw_in))
@@ -199,19 +173,16 @@ with tab2:
                     elif pt.isdigit(): plist.append(f"P{pt}")
             save_to_cloud(plist)
 
-# --- 6. 全區進度圖 (網頁端同步顯示) ---
+# --- 5. 網頁平面圖預覽 ---
 st.markdown("---")
-st.subheader("🗺️ 全區施工進度圖")
-
+st.subheader("🗺️ 現場施工進度全區圖")
 df_plot = df_base.copy()
 if not df_history.empty:
-    # 核心修復：先過濾掉 history 中的 X, Y，避免與底圖衝突產生 ValueError
-    hist_to_merge = df_history.drop(columns=['X', 'Y', '數字'], errors='ignore')
-    df_plot = df_plot.merge(hist_to_merge, on='樁號', how='left')
+    # 核心修復：徹底排除重複欄位防止 ValueError
+    hist_clean = df_history.drop(columns=['X', 'Y', '數字'], errors='ignore')
+    df_plot = df_plot.merge(hist_clean, on='樁號', how='left')
     df_plot['狀態'] = df_plot['施工日期'].fillna('未完成')
-    df_plot['標籤'] = df_plot.apply(
-        lambda r: f"{r['樁號']}({r['機台'][0]}{int(r['施作順序'])})" if pd.notna(r['施作順序']) else r['樁號'], axis=1
-    )
+    df_plot['標籤'] = df_plot.apply(lambda r: f"{r['樁號']}({r['機台'][0]}{int(r['施作順序'])})" if pd.notna(r['施作順序']) else r['樁號'], axis=1)
 else:
     df_plot['狀態'] = '未完成'
     df_plot['標籤'] = df_plot['樁號']
@@ -221,7 +192,7 @@ fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(widt
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=800, plot_bgcolor='white')
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 7. Excel 下載按鈕 ---
+# --- 6. 下載 Excel 報表 (功能保持最強版) ---
 if not df_history.empty:
     def get_excel_report(history_df, full_plot_df):
         output = io.BytesIO()
@@ -234,12 +205,7 @@ if not df_history.empty:
             undone = full_plot_df[full_plot_df['狀態'] == '未完成']
             if not undone.empty:
                 undone[['X', 'Y']].to_excel(writer, sheet_name='全區進度圖', startcol=col_idx, index=False)
-                chart.add_series({
-                    'name': '未完成',
-                    'categories': ['全區進度圖', 1, col_idx, len(undone), col_idx],
-                    'values':     ['全區進度圖', 1, col_idx+1, len(undone), col_idx+1],
-                    'marker':     {'type': 'circle', 'size': 4, 'fill': {'color': '#696969'}, 'border': {'color': '#696969'}}
-                })
+                chart.add_series({'name': '未完成', 'categories': ['全區進度圖', 1, col_idx, len(undone), col_idx], 'values': ['全區進度圖', 1, col_idx+1, len(undone), col_idx+1], 'marker': {'type': 'circle', 'size': 4, 'fill': {'color': '#696969'}, 'border': {'color': '#696969'}}})
                 col_idx += 3
             dates = history_df['施工日期'].dropna().unique()
             for d in sorted(dates):
@@ -247,15 +213,8 @@ if not df_history.empty:
                 if not date_data.empty:
                     date_data[['X', 'Y', '標籤']].to_excel(writer, sheet_name='全區進度圖', startcol=col_idx, index=False)
                     custom_labels = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col_idx + 2)}${ri + 2}'} for ri in range(len(date_data))]
-                    chart.add_series({
-                        'name': str(d),
-                        'categories': ['全區進度圖', 1, col_idx, len(date_data), col_idx],
-                        'values':     ['全區進度圖', 1, col_idx+1, len(date_data), col_idx+1],
-                        'marker':     {'type': 'circle', 'size': 7},
-                        'data_labels': {'custom': custom_labels, 'position': 'above'}
-                    })
+                    chart.add_series({'name': str(d), 'categories': ['全區進度圖', 1, col_idx, len(date_data), col_idx], 'values': ['全區進度圖', 1, col_idx+1, len(date_data), col_idx+1], 'marker': {'type': 'circle', 'size': 7}, 'data_labels': {'custom': custom_labels, 'position': 'above'}})
                     col_idx += 4
-            chart.set_title({'name': '排樁全區進度圖'}); chart.set_size({'width': 2400, 'height': 1400}); worksheet.insert_chart('B2', chart)
+            chart.set_title({'name': '全區進度圖'}); chart.set_size({'width': 2400, 'height': 1400}); worksheet.insert_chart('B2', chart)
         return output.getvalue()
-
-    st.sidebar.download_button("📥 匯出 Excel 總報表", get_excel_report(df_history, df_plot), f"Report_{datetime.date.today()}.xlsx", type="primary")
+    st.sidebar.download_button("📥 匯出 Excel 總報表", get_excel_report(df_history, df_plot), f"UN023_Report_{datetime.date.today()}.xlsx", type="primary")
