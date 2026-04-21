@@ -1,6 +1,13 @@
 streamlit
-streamlit-gsheets
+pdfplumber
+pandas
+plotly
+streamlit
 pandas
 plotly
 st-gsheets-connection
 gspread
+streamlit
+streamlit-gsheets
+pandas
+plotly
