@@ -6,7 +6,7 @@ import datetime
 import io
 
 st.set_page_config(page_title="UN023 排樁進度管理系統", layout="wide")
-st.title("📊 UN023 排樁進度管理系統 (雙機報表版)")
+st.title("📊 UN023 排樁進度管理系統 (機台分流與圖文報表版)")
 
 # --- 1. 讀取座標底圖 ---
 @st.cache_data
@@ -37,204 +37,155 @@ def load_base_data():
 
 df_base = load_base_data()
 
-# --- 2. 歷史進度管理 (系統存檔) ---
-st.sidebar.header("📂 系統存檔區 (防遺失)")
-history_file = st.sidebar.file_uploader("1️⃣ 每日開工：匯入昨日進度 CSV", type="csv")
-
+# --- 2. 歷史進度管理 ---
 if 'history' not in st.session_state:
     st.session_state['history'] = []
+
+st.sidebar.header("📂 系統存檔區")
+history_file = st.sidebar.file_uploader("1️⃣ 匯入昨日進度 CSV (接續紀錄)", type="csv")
 
 if history_file is not None:
     try:
         df_hist = pd.read_csv(history_file)
-        # 相容舊版 CSV：如果以前的存檔沒有機台，自動補上
-        if '機台' not in df_hist.columns:
-            df_hist['機台'] = '未指定'
-            
+        if '機台' not in df_hist.columns: df_hist['機台'] = 'A車'
+        # 確保順序與日期欄位正確
         st.session_state['history'] = df_hist.drop_duplicates(subset=['樁號']).to_dict('records')
-        st.sidebar.success("✅ 歷史進度已成功匯入！")
-    except Exception as e:
-        st.sidebar.error("檔案讀取失敗，請確認格式。")
+        st.sidebar.success("✅ 歷史紀錄已同步")
+    except:
+        st.sidebar.error("讀取失敗，請確認檔案格式。")
 
 if st.session_state['history']:
-    df_download = pd.DataFrame(st.session_state['history'])
-    csv_data = df_download.to_csv(index=False).encode('utf-8-sig')
-    st.sidebar.download_button(
-        label="2️⃣ 每日收工：下載系統存檔 (CSV)",
-        data=csv_data,
-        file_name=f"排樁系統備份_{datetime.date.today()}.csv",
-        mime="text/csv",
-        type="primary"
-    )
-    
-if st.sidebar.button("🗑️ 清空目前網頁暫存紀錄"):
+    csv_data = pd.DataFrame(st.session_state['history']).to_csv(index=False).encode('utf-8-sig')
+    st.sidebar.download_button("2️⃣ 下載今日備份 CSV", data=csv_data, file_name=f"Backup_{datetime.date.today()}.csv", mime="text/csv")
+
+if st.sidebar.button("🗑️ 清空所有紀錄"):
     st.session_state['history'] = []
     st.rerun()
 
-st.sidebar.markdown("---")
-
-# --- 3. 施工登錄介面 ---
+# --- 3. 施工登錄 ---
 st.markdown("### 📝 施工進度登錄")
-
-c_date, c_machine, c_mode = st.columns([1, 1, 2])
-today = str(c_date.date_input("施工日期", datetime.date.today()))
-machine_val = c_machine.radio("施工機台：", ["A車", "B車"], horizontal=True)
-mode = c_mode.radio("跳支模式：", ["連續 (1, 2...)", "4支一循環 (1, 5...)", "3支一循環 (1, 4...)"], horizontal=True)
+c1, c2, c3 = st.columns([1, 1, 2])
+today = str(c1.date_input("日期"))
+machine = c2.radio("施工機台：", ["A車", "B車"], horizontal=True)
+mode = c3.radio("模式：", ["連續", "4支一循環", "3支一循環"], horizontal=True)
 
 step = 1
 if "4支" in mode: step = 4
 elif "3支" in mode: step = 3
 
-def process_piles(new_piles):
-    current_max_seq = 0
-    if st.session_state['history']:
-        current_max_seq = max([int(item['施作順序']) for item in st.session_state['history'] if pd.notna(item['施作順序'])])
+def process_piles(pile_list):
+    hist_df = pd.DataFrame(st.session_state['history']) if st.session_state['history'] else pd.DataFrame(columns=['樁號','機台','施作順序'])
     
-    added_count = 0
-    for pid in new_piles:
+    # 分開計算機台順序
+    m_hist = hist_df[hist_df['機台'] == machine]
+    current_max = 0 if m_hist.empty else m_hist['施作順序'].max()
+    
+    added = 0
+    for pid in pile_list:
         pid = pid.upper().strip()
         if not any(x['樁號'] == pid for x in st.session_state['history']):
-            current_max_seq += 1
+            current_max += 1
             st.session_state['history'].append({
                 '樁號': pid,
                 '施工日期': today,
-                '機台': machine_val,
-                '施作順序': current_max_seq
+                '機台': machine,
+                '施作順序': current_max
             })
-            added_count += 1
-            
-    if added_count > 0:
-        st.success(f"✅ 已登錄！{machine_val} 新增 {added_count} 支樁。")
-    else:
-        st.info("ℹ️ 輸入的樁號均已登錄過，無新增。")
+            added += 1
+    st.success(f"已登錄！{machine} 新增 {added} 支。")
 
-tab1, tab2 = st.tabs(["🎯 起點自動推算", "✏️ 區間手動輸入"])
-
-with tab1:
-    with st.form("auto_form"):
-        col1, col2, col3 = st.columns(3)
-        s_num = col1.number_input("開始數字 (P)", 1, 613, 1)
-        direct = col2.radio("方向", ["遞增 (+)", "遞減 (-)"])
-        amount = col3.number_input("施作數量", 1, 100, 10)
+t1, t2 = st.tabs(["起點推算", "區間輸入"])
+with t1:
+    with st.form("f1"):
+        cc1, cc2, cc3 = st.columns(3)
+        s_n = cc1.number_input("起始數字", 1, 613, 1)
+        dir = cc2.radio("方向", ["遞增", "遞減"])
+        num = cc3.number_input("支數", 1, 100, 10)
         if st.form_submit_button("確認登錄"):
             plist = []
-            curr = s_num
-            for _ in range(amount):
-                if 1 <= curr <= 613:
-                    plist.append(f"P{curr}")
-                curr = curr + step if "遞增" in direct else curr - step
+            curr = s_n
+            for _ in range(num):
+                if 1 <= curr <= 613: plist.append(f"P{curr}")
+                curr = curr + step if dir == "遞增" else curr - step
             process_piles(plist)
-
-with tab2:
-    with st.form("manual_form"):
-        raw_in = st.text_input("輸入區間 (例如: 1-50, 60)")
+with t2:
+    with st.form("f2"):
+        raw = st.text_input("輸入區間 (如 1-50)")
         if st.form_submit_button("確認登錄"):
             plist = []
-            if raw_in:
-                clean = re.sub(r'[pP]', '', raw_in)
-                parts = re.split(r'[,\s]+', clean.strip())
-                for p in parts:
-                    if '-' in p:
-                        try:
-                            s, e = map(int, p.split('-'))
-                            rng = range(s, e+1, step) if s <= e else range(s, e-1, -step)
-                            for i in rng: plist.append(f"P{i}")
-                        except: pass
-                    elif p.isdigit():
-                        plist.append(f"P{p}")
+            if raw:
+                nums = re.split(r'[,\s]+', re.sub(r'[pP]', '', raw))
+                for n in nums:
+                    if '-' in n:
+                        s, e = map(int, n.split('-'))
+                        rng = range(s, e+1, step) if s <= e else range(s, e-1, -step)
+                        for i in rng: plist.append(f"P{i}")
+                    elif n.isdigit(): plist.append(f"P{n}")
             process_piles(plist)
 
-# --- 4. 圖面合併與渲染 ---
-if df_base is not None:
-    df_plot = df_base.copy()
-    
-    if st.session_state['history']:
-        df_hist = pd.DataFrame(st.session_state['history'])
-        df_plot = df_plot.merge(df_hist, on='樁號', how='left')
-        df_plot['狀態'] = df_plot['施工日期'].fillna('未完成')
-        
-        # 標籤顯示：包含機台與順序
-        def make_label(r):
-            if pd.notna(r['施作順序']):
-                machine_str = r['機台'] if '機台' in r and pd.notna(r['機台']) else ''
-                return f"{r['樁號']} ({int(r['施作順序'])}) {machine_str}"
-            return r['樁號']
+# --- 4. 圖面渲染 ---
+df_plot = df_base.copy()
+if st.session_state['history']:
+    df_h = pd.DataFrame(st.session_state['history'])
+    df_plot = df_plot.merge(df_h, on='樁號', how='left')
+    df_plot['狀態'] = df_plot['施工日期'].fillna('未完成')
+    df_plot['標籤'] = df_plot.apply(lambda r: f"{r['樁號']}({r['機台'][0]}{int(r['施作順序'])})" if pd.notna(r['施作順序']) else r['樁號'], axis=1)
+else:
+    df_plot['狀態'] = '未完成'
+    df_plot['標籤'] = df_plot['樁號']
+
+fig = px.scatter(df_plot, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成':'lightgrey'})
+fig.update_traces(textposition='top center', marker=dict(size=12))
+fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=800, margin=dict(l=0,r=0,t=0,b=0))
+st.plotly_chart(fig, use_container_width=True)
+
+# --- 5. 強大 Excel 報表匯出 ---
+st.markdown("---")
+if st.session_state['history']:
+    def to_excel(df_exp, base_info):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            # 1. 明細表
+            df_full = base_info.merge(df_exp, on='樁號', how='right')
+            df_full[['樁號', '施工日期', '機台', '施作順序', 'X', 'Y']].to_excel(writer, sheet_name='施工明細', index=False)
             
-        df_plot['標籤'] = df_plot.apply(make_label, axis=1)
-    else:
-        df_plot['狀態'] = '未完成'
-        df_plot['標籤'] = df_plot['樁號']
+            # 2. 圖表統計頁
+            summary = df_exp.pivot_table(index='施工日期', columns='機台', values='樁號', aggfunc='count', fill_value=0)
+            summary.to_excel(writer, sheet_name='進度圖表')
+            
+            workbook = writer.book
+            worksheet = writer.sheets['進度圖表']
+            
+            # 建立長條圖 (A/B 車進度)
+            chart = workbook.add_chart({'type': 'column', 'subtype': 'stacked'})
+            for i, col in enumerate(summary.columns):
+                chart.add_series({
+                    'name':       ['進度圖表', 0, i + 1],
+                    'categories': ['進度圖表', 1, 0, len(summary), 0],
+                    'values':     ['進度圖表', 1, i + 1, len(summary), i + 1],
+                })
+            worksheet.insert_chart('E2', chart)
+            
+            # 建立樁位分布圖 (模擬圖色)
+            scatter = workbook.add_chart({'type': 'scatter'})
+            # 未完成
+            unfinished = df_plot[df_plot['狀態'] == '未完成']
+            # 已完成
+            finished = df_plot[df_plot['狀態'] != '未完成']
+            
+            # 在 Excel 畫出點位圖
+            scatter.add_series({
+                'name': '已完成樁位',
+                'categories': ['施工明細', 1, 4, len(df_full), 4], # X 座標
+                'values':     ['施工明細', 1, 5, len(df_full), 5], # Y 座標
+                'marker':     {'type': 'circle', 'size': 8, 'border': {'color': 'red'}, 'fill': {'color': 'red'}},
+            })
+            scatter.set_title({'name': '全區樁位分布進度圖'})
+            scatter.set_x_axis({'visible': False})
+            scatter.set_y_axis({'visible': False})
+            worksheet.insert_chart('E25', scatter)
+            
+        return output.getvalue()
 
-    st.sidebar.metric("目前網頁暫存完成數", len(st.session_state['history']))
-    h = st.sidebar.slider("畫布高度", 600, 2500, 1000)
-
-    fig = px.scatter(
-        df_plot, x='X', y='Y', text='標籤', color='狀態',
-        color_discrete_map={'未完成': 'lightgrey'}, 
-        hover_data={'X': False, 'Y': False, '標籤': False}
-    )
-    
-    fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(width=1, color='DarkSlateGrey')))
-    fig.update_layout(
-        xaxis=dict(visible=False, showgrid=False),
-        yaxis=dict(scaleanchor="x", scaleratio=1, visible=False, showgrid=False),
-        plot_bgcolor='white', margin=dict(l=0, r=0, t=0, b=0), height=h,
-        legend=dict(title="施工日期", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-
-    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
-
-    # --- 5. 產生圖文並茂的 Excel 報表 ---
-    st.markdown("---")
-    st.subheader("📑 匯出呈報總表 (Excel 圖加表)")
-    
-    if st.session_state['history']:
-        def generate_excel_report(df_export):
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                # 第一頁：原始清單
-                df_export.to_excel(writer, index=False, sheet_name='進度明細表')
-                
-                # 第二頁：統計與圖表
-                # 建立透視表：列為日期，欄為機台
-                if '機台' in df_export.columns:
-                    summary = df_export.pivot_table(index='施工日期', columns='機台', values='樁號', aggfunc='count', fill_value=0)
-                else:
-                    summary = df_export.groupby('施工日期').size().reset_index(name='完成支數').set_index('施工日期')
-                
-                summary.to_excel(writer, sheet_name='每日圖表統計')
-                
-                # 畫 Excel 長條圖
-                workbook = writer.book
-                worksheet = writer.sheets['每日圖表統計']
-                chart = workbook.add_chart({'type': 'column', 'subtype': 'stacked'}) # 堆疊長條圖
-                
-                for i, col in enumerate(summary.columns):
-                    chart.add_series({
-                        'name':       ['每日圖表統計', 0, i + 1],
-                        'categories': ['每日圖表統計', 1, 0, len(summary), 0],
-                        'values':     ['每日圖表統計', 1, i + 1, len(summary), i + 1],
-                        'data_labels': {'value': True} # 顯示柱子上的數字
-                    })
-                
-                chart.set_title({'name': '排樁每日施工進度 (A車/B車)'})
-                chart.set_x_axis({'name': '日期'})
-                chart.set_y_axis({'name': '完成支數'})
-                chart.set_size({'width': 720, 'height': 480})
-                
-                worksheet.insert_chart('E2', chart)
-                
-            return output.getvalue()
-        
-        # 執行匯出
-        df_to_export = pd.DataFrame(st.session_state['history'])
-        excel_data = generate_excel_report(df_to_export)
-        
-        st.download_button(
-            label="📊 點此下載 Excel 總表 (含統計圖與數據)",
-            data=excel_data,
-            file_name=f"排樁進度總表_{datetime.date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.info("尚無歷史紀錄，無法產生報表。")
+    excel_data = to_excel(pd.DataFrame(st.session_state['history']), df_base)
+    st.download_button("📊 下載 Excel 完整報表 (含座標分佈圖)", data=excel_data, file_name=f"Report_{datetime.date.today()}.xlsx")
