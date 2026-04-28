@@ -9,8 +9,8 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統 V13", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (雲端同步圖表版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V14", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雲端圖表強制生成版)")
 
 @st.cache_data
 def load_base_data():
@@ -82,20 +82,28 @@ def update_cloud_chart():
     if not ss_now or df_history.empty: return
     
     try:
+        # 1. 強制擴充雲端欄位空間，防止圖表超出邊界報錯
+        if m_now.col_count < 18:
+            m_now.add_cols(18 - m_now.col_count)
+
         plot_df = df_base[['樁號', 'X', 'Y']].copy()
         hist = df_history.copy()
         plot_df = plot_df.merge(hist[['樁號', '施工日期']], on='樁號', how='left')
 
         gs_matrix = pd.DataFrame()
         gs_matrix['X'] = plot_df['X']
-        gs_matrix['未完成'] = plot_df['Y'].where(plot_df['施工日期'].isna(), '')
+        gs_matrix['未完成'] = plot_df['Y'].where(plot_df['施工日期'].isna(), None)
         
         dates = sorted(plot_df['施工日期'].dropna().unique())
         for d in dates:
-            gs_matrix[str(d)] = plot_df['Y'].where(plot_df['施工日期'] == d, '')
+            gs_matrix[str(d)] = plot_df['Y'].where(plot_df['施工日期'] == d, None)
+
+        # 2. 強制轉換 NaN 為 None 以符合 Google JSON 格式
+        gs_matrix = gs_matrix.astype(object).where(pd.notnull(gs_matrix), None)
+        out_data = [gs_matrix.columns.values.tolist()] + gs_matrix.values.tolist()
 
         c_now.clear()
-        c_now.update([gs_matrix.columns.values.tolist()] + gs_matrix.fillna('').values.tolist())
+        c_now.update("A1", out_data)
 
         m_id = m_now.id
         c_id = c_now.id
@@ -121,7 +129,7 @@ def update_cloud_chart():
             "addChart": {
                 "chart": {
                     "spec": {
-                        "title": "排樁全區施工進度圖",
+                        "title": "全區施工進度圖",
                         "basicChart": {
                             "chartType": "SCATTER",
                             "legendPosition": "RIGHT_LEGEND",
@@ -137,20 +145,20 @@ def update_cloud_chart():
                     },
                     "position": {
                         "overlayPosition": {
-                            "anchorCell": {"sheetId": m_id, "rowIndex": 1, "columnIndex": 8},
-                            "widthPixels": 1200, "heightPixels": 850
+                            "anchorCell": {"sheetId": m_id, "rowIndex": 1, "columnIndex": 7},
+                            "widthPixels": 1000, "heightPixels": 750
                         }
                     }
                 }
             }
         })
         ss_now.batch_update({"requests": reqs})
-        st.success("✅ 雲端圖表繪製成功")
+        st.success("✅ 雲端圖表強制重繪成功")
     except Exception as e:
-        st.error(f"雲端繪圖異常: {e}")
+        st.error(f"🚫 雲端繪圖被阻擋，詳細錯誤原因: {e}")
 
-st.sidebar.header("📂 數據備份")
-if st.sidebar.button("🔄 強制同步雲端圖表"):
+st.sidebar.header("📂 數據操作")
+if st.sidebar.button("🔄 手動生成雲端圖表"):
     update_cloud_chart()
 
 up_file = st.sidebar.file_uploader("匯入歷史 Excel/CSV", type=['csv', 'xlsx'])
