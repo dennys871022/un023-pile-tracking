@@ -9,10 +9,9 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統 V12", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V13", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (雲端同步圖表版)")
 
-# 1. 座標底圖讀取
 @st.cache_data
 def load_base_data():
     try:
@@ -38,7 +37,6 @@ def load_base_data():
 
 df_base = load_base_data()
 
-# 2. 雲端即時連線 (不使用快取，確保能偵測到手動刪除分頁)
 def get_gs_connection():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -47,25 +45,22 @@ def get_gs_connection():
         client = gspread.authorize(creds)
         ss = client.open_by_url(st.secrets["sheet_url"])
         
-        # 施工明細檢查/重建
         try:
             sh_main = ss.worksheet("施工明細")
         except:
             sh_main = ss.add_worksheet("施工明細", 1000, 20)
             sh_main.append_row(['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
             
-        # 繪圖區檢查/重建
         try:
-            sh_chart = ss.worksheet("系統繪圖區(勿動)")
+            sh_chart = ss.worksheet("系統繪圖區")
         except:
-            sh_chart = ss.add_worksheet("系統繪圖區(勿動)", 700, 60)
+            sh_chart = ss.add_worksheet("系統繪圖區", 700, 60)
             
         return ss, sh_main, sh_chart
     except Exception as e:
         st.error(f"雲端連線異常: {e}")
         return None, None, None
 
-# 3. 獲取資料
 def fetch_current_data(sh_main):
     if sh_main is None: return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
     try:
@@ -82,39 +77,28 @@ def fetch_current_data(sh_main):
 ss, sh_main, sh_chart = get_gs_connection()
 df_history = fetch_current_data(sh_main)
 
-# 4. ★ 強制更新雲端彩色圖表與標籤 ★
 def update_cloud_chart():
-    # 重新獲取最新分頁控制權
     ss_now, m_now, c_now = get_gs_connection()
     if not ss_now or df_history.empty: return
     
     try:
-        # 整理標籤與日期
         plot_df = df_base[['樁號', 'X', 'Y']].copy()
         hist = df_history.copy()
-        def label_maker(r):
-            m = str(r.get('機台', 'A'))[0]
-            s = r.get('施作順序', 0)
-            return f"{r['樁號']}({m}{int(s)})"
-        hist['標籤'] = hist.apply(label_maker, axis=1)
-        plot_df = plot_df.merge(hist[['樁號', '施工日期', '標籤']], on='樁號', how='left')
+        plot_df = plot_df.merge(hist[['樁號', '施工日期']], on='樁號', how='left')
 
-        # 建立多序列矩陣：A(X), B(標籤), C(未完成), D...(日期Y)
         gs_matrix = pd.DataFrame()
         gs_matrix['X'] = plot_df['X']
-        gs_matrix['標籤'] = plot_df['標籤']
         gs_matrix['未完成'] = plot_df['Y'].where(plot_df['施工日期'].isna(), '')
         
         dates = sorted(plot_df['施工日期'].dropna().unique())
         for d in dates:
             gs_matrix[str(d)] = plot_df['Y'].where(plot_df['施工日期'] == d, '')
 
-        # 清空並寫入繪圖分頁
         c_now.clear()
         c_now.update([gs_matrix.columns.values.tolist()] + gs_matrix.fillna('').values.tolist())
 
-        # API 指令：刪除舊圖並建立包含圖例與日期的散佈圖
-        m_id = m_now.id; c_id = c_now.id
+        m_id = m_now.id
+        c_id = c_now.id
         num_rows = len(gs_matrix) + 1
         num_cols = len(gs_matrix.columns)
 
@@ -126,9 +110,8 @@ def update_cloud_chart():
             for ch in sheet_meta['charts']:
                 reqs.append({"deleteChart": {"chartId": ch['chartId']}})
 
-        # 建立序列 (從「未完成」到所有日期)
         series = []
-        for i in range(2, num_cols):
+        for i in range(1, num_cols):
             series.append({
                 "series": {"sourceRange": {"sources": [{"sheetId": c_id, "startRowIndex": 0, "endRowIndex": num_rows, "startColumnIndex": i, "endColumnIndex": i+1}]}},
                 "targetAxis": "LEFT_AXIS"
@@ -143,8 +126,8 @@ def update_cloud_chart():
                             "chartType": "SCATTER",
                             "legendPosition": "RIGHT_LEGEND",
                             "axis": [
-                                {"position": "BOTTOM_AXIS", "title": "X 座標"},
-                                {"position": "LEFT_AXIS", "title": "Y 座標"}
+                                {"position": "BOTTOM_AXIS", "title": "X"},
+                                {"position": "LEFT_AXIS", "title": "Y"}
                             ],
                             "domains": [{
                                 "domain": {"sourceRange": {"sources": [{"sheetId": c_id, "startRowIndex": 0, "endRowIndex": num_rows, "startColumnIndex": 0, "endColumnIndex": 1}]}}
@@ -162,11 +145,10 @@ def update_cloud_chart():
             }
         })
         ss_now.batch_update({"requests": reqs})
-        st.success("✅ 雲端圖表已強制重繪 (包含日期圖例)")
+        st.success("✅ 雲端圖表繪製成功")
     except Exception as e:
-        st.error(f"雲端繪圖引擎出錯: {e}")
+        st.error(f"雲端繪圖異常: {e}")
 
-# 5. UI 操作介面
 st.sidebar.header("📂 數據備份")
 if st.sidebar.button("🔄 強制同步雲端圖表"):
     update_cloud_chart()
@@ -239,7 +221,6 @@ with t2:
                     elif pt.isdigit(): plist.append(f"P{pt}")
             save_data(plist)
 
-# 6. 網頁平面圖 (含平移/縮放)
 st.markdown("---")
 st.subheader("🗺️ 現場施工圖 (左鍵平移 / 滾輪縮放)")
 df_p = df_base.copy()
@@ -260,7 +241,6 @@ fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(widt
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=950, plot_bgcolor='white', dragmode='pan')
 st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-# 7. Excel 下載
 if not df_history.empty:
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
