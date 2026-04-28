@@ -252,8 +252,18 @@ else:
 
 fig = px.scatter(df_plot, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成': '#4F4F4F'})
 fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(width=1, color='white')))
-fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white')
-st.plotly_chart(fig, use_container_width=True)
+
+# 加入 dragmode='pan' 將滑鼠左鍵預設行為改為平移
+fig.update_layout(
+    xaxis_visible=False, 
+    yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), 
+    height=900, 
+    plot_bgcolor='white',
+    dragmode='pan' 
+)
+
+# 加入 config={'scrollZoom': True} 開啟滾輪縮放功能
+st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
 # --- 7. 下載 Excel 總報表 ---
 if not df_history.empty:
