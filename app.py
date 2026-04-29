@@ -9,10 +9,9 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統 V15", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V16", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (穩定同步版)")
 
-# 1. 座標底圖讀取
 @st.cache_data
 def load_base_data():
     try:
@@ -38,7 +37,6 @@ def load_base_data():
 
 df_base = load_base_data()
 
-# 2. 雲端即時連線
 def get_gs_connection():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -79,7 +77,6 @@ def fetch_current_data(sh_main):
 ss, sh_main, sh_chart = get_gs_connection()
 df_history = fetch_current_data(sh_main)
 
-# 3. 數據同步至雲端繪圖區
 def sync_to_chart_sheet():
     ss_now, m_now, c_now = get_gs_connection()
     if not ss_now or df_history.empty: return
@@ -112,7 +109,6 @@ def sync_to_chart_sheet():
     except Exception as e:
         st.error(f"同步失敗: {e}")
 
-# 4. UI 介面
 st.sidebar.header("📂 備份與同步")
 if st.sidebar.button("🔄 手動同步雲端數據"):
     sync_to_chart_sheet()
@@ -140,8 +136,8 @@ st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = str(c1.date_input("日期"))
 machine = c2.radio("機台", ["A車", "B車"], horizontal=True)
-mode = c3.radio("模式", ["4支一循環", "3支一循環"], horizontal=True)
-step = 4 if "4支" in mode else 3
+mode = c3.radio("模式", ["4支一循環", "2支一循環"], horizontal=True)
+step = 4 if "4支" in mode else 2
 
 def save_data(piles):
     if not piles or sh_main is None: return
@@ -185,7 +181,6 @@ with t2:
                     elif pt.isdigit(): plist.append(f"P{pt}")
             save_data(plist)
 
-# 5. 網頁預覽圖
 st.markdown("---")
 st.subheader("🗺️ 現場施工全區圖 (左鍵平移 / 滾輪縮放)")
 df_p = df_base.copy()
@@ -206,7 +201,6 @@ fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(widt
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=950, plot_bgcolor='white', dragmode='pan')
 st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-# 6. 下載 Excel
 if not df_history.empty:
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
