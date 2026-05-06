@@ -9,8 +9,16 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統 V18", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (自動歸檔版)")
+# 嘗試載入智慧排版繪圖套件
+try:
+    import matplotlib.pyplot as plt
+    from adjustText import adjust_text
+    MATPLOTLIB_READY = True
+except ImportError:
+    MATPLOTLIB_READY = False
+
+st.set_page_config(page_title="UN023 排樁進度系統 V19", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (PDF智慧排版雙輸出版)")
 
 @st.cache_data
 def load_base_data():
@@ -113,24 +121,18 @@ def process_status_logic(df_hist, df_b):
 def sync_to_chart_sheet():
     ss_now, m_now, c_now = get_gs_connection()
     if not ss_now or df_history.empty: return
-    
     try:
         plot_df = process_status_logic(df_history, df_base)
-        
         gs_matrix = pd.DataFrame()
         gs_matrix['X'] = plot_df['X']
         gs_matrix['標籤'] = plot_df['標籤']
-        
         gs_matrix['未完成'] = plot_df['Y'].where(plot_df['狀態'] == '未完成', None)
         gs_matrix['[已完成]'] = plot_df['Y'].where(plot_df['狀態'] == '[已完成]', None)
-        
         valid_dates = sorted([s for s in plot_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
         for d in valid_dates:
             gs_matrix[d] = plot_df['Y'].where(plot_df['狀態'] == d, None)
-
         gs_matrix = gs_matrix.astype(object).where(pd.notnull(gs_matrix), None)
         out_data = [gs_matrix.columns.values.tolist()] + gs_matrix.values.tolist()
-
         c_now.clear()
         c_now.update("A1", out_data)
         st.success("✅ 雲端繪圖數據已同步")
@@ -229,7 +231,12 @@ fig.update_traces(
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=950, plot_bgcolor='white', dragmode='pan')
 st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
+# --- 輸出區域 ---
 if not df_history.empty:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📥 報表與圖面下載")
+    
+    # 1. 傳統 Excel 下載 (保留)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -245,7 +252,6 @@ if not df_history.empty:
             for state in states:
                 sub_df = p_df[p_df['狀態'] == state].reset_index(drop=True)
                 if sub_df.empty: continue
-                
                 sub_df[['X', 'Y', '標籤']].to_excel(wr, sheet_name='全區進度圖', startcol=col, index=False)
                 
                 marker_color = colors.get(state)
@@ -259,23 +265,68 @@ if not df_history.empty:
                     'values': ['全區進度圖', 1, col+1, len(sub_df), col+1],
                     'marker': {'type': 'circle', 'size': 6, 'fill': {'color': marker_color}, 'border': {'color': marker_color}}
                 }
-                
                 if state != '未完成':
                     clbls = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(sub_df))]
                     series_data['data_labels'] = {'custom': clbls, 'position': 'above', 'font': {'size': 8}}
-                    
                 ch.add_series(series_data)
                 col += 4
             
             today_str = datetime.date.today().strftime('%Y-%m-%d')
             ch.set_title({'name': f'{today_str} 施作進度回報'})
             ch.set_size({'width': 2400, 'height': 1500})
-            
-            # 關閉 X 軸與 Y 軸及格線
             ch.set_x_axis({'visible': False, 'major_gridlines': {'visible': False}})
             ch.set_y_axis({'visible': False, 'major_gridlines': {'visible': False}})
-            
             ws.insert_chart('B2', ch)
-            
         return out.getvalue()
-    st.sidebar.download_button("📥 匯出 Excel 總報表", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="primary")
+    
+    st.sidebar.download_button("🟢 匯出 Excel (含數據與圖表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="secondary")
+
+    # 2. PDF 智慧排版圖下載 (新增)
+    if not MATPLOTLIB_READY:
+        st.sidebar.error("⚠️ 若要使用 PDF 智慧排版下載，請在終端機安裝套件：\n`pip install matplotlib adjustText`")
+    else:
+        def pdf_gen(p_df):
+            # 設定中文字型防止亂碼 (涵蓋微軟與蘋果常見字型)
+            plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'PingFang TC', 'SimHei', 'Arial Unicode MS', 'sans-serif']
+            plt.rcParams['axes.unicode_minus'] = False
+            
+            fig, ax = plt.subplots(figsize=(24, 16)) # 大尺寸畫布
+            
+            states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+            colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
+            fallback_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
+            color_idx = 0
+            
+            texts = []
+            for state in states:
+                sub_df = p_df[p_df['狀態'] == state]
+                if sub_df.empty: continue
+                
+                c = colors.get(state)
+                if not c:
+                    c = fallback_colors[color_idx % len(fallback_colors)]
+                    color_idx += 1
+                
+                # 繪製點位
+                ax.scatter(sub_df['X'], sub_df['Y'], label=state, color=c, s=40, zorder=2)
+                
+                # 加入文字 (排除未完成以保持畫面乾淨)
+                if state != '未完成':
+                    for _, row in sub_df.iterrows():
+                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=7, ha='center', va='center'))
+
+            # 啟動智慧文字防撞演算法 (會自動將重疊文字推開並畫出極細的引導線)
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5), ax=ax)
+            
+            ax.set_aspect('equal', adjustable='datalim')
+            ax.axis('off') # 關閉座標與格線
+            today_str = datetime.date.today().strftime('%Y-%m-%d')
+            plt.title(f'{today_str} 施作進度回報', fontsize=24, pad=20)
+            plt.legend(loc='upper right', fontsize=12)
+            
+            pdf_buf = io.BytesIO()
+            plt.savefig(pdf_buf, format='pdf', bbox_inches='tight')
+            plt.close(fig)
+            return pdf_buf.getvalue()
+
+        st.sidebar.download_button("🔴 匯出 PDF 智慧排版高畫質圖", pdf_gen(df_p), f"Plan_{datetime.date.today()}.pdf", type="primary")
