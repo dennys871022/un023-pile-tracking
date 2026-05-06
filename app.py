@@ -17,9 +17,30 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V19", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (PDF智慧排版雙輸出版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V21", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (局部框選雙輸出版)")
 
+# ---------------- 自動處理雲端中文字體缺失問題 ----------------
+@st.cache_resource
+def setup_chinese_font():
+    import os
+    import urllib.request
+    import matplotlib.font_manager as fm
+    font_path = 'NotoSansCJKtc-Regular.otf'
+    if not os.path.exists(font_path):
+        try:
+            url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            print(f"字體下載失敗: {e}")
+            pass
+    
+    if os.path.exists(font_path):
+        fm.fontManager.addfont(font_path)
+        return fm.FontProperties(fname=font_path).get_name()
+    return None
+
+# ---------------- 底圖載入 ----------------
 @st.cache_data
 def load_base_data():
     try:
@@ -212,7 +233,9 @@ with t2:
             save_data(plist)
 
 st.markdown("---")
-st.subheader("🗺️ 現場施工全區圖 (左鍵平移 / 滾輪縮放)")
+st.subheader("🗺️ 現場施工全區圖 (框選範圍即可局部導出 PDF)")
+st.info("💡 **局部導出教學**：將游標移至圖表右上角，點選 `⬚ (Box Select)` 或 `⸠ (Lasso Select)`，在圖面上畫出您想要的範圍。側邊欄的 PDF 按鈕將自動鎖定該範圍！若想取消，請在空白處點擊兩下。")
+
 df_p = process_status_logic(df_history, df_base)
 
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
@@ -221,7 +244,8 @@ colors_seq = px.colors.qualitative.Plotly
 fig = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
     color_discrete_map=color_map,
-    color_discrete_sequence=colors_seq
+    color_discrete_sequence=colors_seq,
+    custom_data=['樁號'] # 重要綁定：讓程式知道您框選了哪些樁
 )
 fig.update_traces(
     textposition='top center', 
@@ -229,14 +253,32 @@ fig.update_traces(
     marker=dict(size=10, line=dict(width=1, color='white'))
 )
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=950, plot_bgcolor='white', dragmode='pan')
-st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+
+# --- 擷取使用者的框選資料 ---
+try:
+    selection_event = st.plotly_chart(
+        fig, 
+        use_container_width=True, 
+        config={'scrollZoom': True},
+        on_select="rerun",
+        selection_mode=('box', 'lasso')
+    )
+    
+    selected_piles = []
+    if selection_event and "selection" in selection_event and selection_event["selection"]["points"]:
+        # 取出使用者框起來的所有樁號
+        selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]]
+        
+except TypeError:
+    # 兼容非常舊的 Streamlit 版本
+    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+    selected_piles = []
 
 # --- 輸出區域 ---
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📥 報表與圖面下載")
     
-    # 1. 傳統 Excel 下載 (保留)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -279,18 +321,31 @@ if not df_history.empty:
             ws.insert_chart('B2', ch)
         return out.getvalue()
     
-    st.sidebar.download_button("🟢 匯出 Excel (含數據與圖表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="secondary")
+    # Excel 永遠維持匯出「全區圖」
+    st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="secondary")
 
-    # 2. PDF 智慧排版圖下載 (新增)
     if not MATPLOTLIB_READY:
-        st.sidebar.error("⚠️ 若要使用 PDF 智慧排版下載，請在終端機安裝套件：\n`pip install matplotlib adjustText`")
+        st.sidebar.error("⚠️ 請確保已在 GitHub 的 requirements.txt 加入 matplotlib 與 adjustText")
     else:
+        # 決定 PDF 要吃全區資料還是局部資料
+        if selected_piles:
+            st.sidebar.success(f"🎯 已鎖定框選範圍 ({len(selected_piles)} 個點位)")
+            pdf_df = df_p[df_p['樁號'].isin(selected_piles)].copy()
+            pdf_btn_text = "🔴 匯出 PDF (您框選的局部範圍)"
+        else:
+            st.sidebar.info("🗺️ 目前為全區模式")
+            pdf_df = df_p.copy()
+            pdf_btn_text = "🔴 匯出 PDF (全區圖)"
+
         def pdf_gen(p_df):
-            # 設定中文字型防止亂碼 (涵蓋微軟與蘋果常見字型)
-            plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'PingFang TC', 'SimHei', 'Arial Unicode MS', 'sans-serif']
+            font_name = setup_chinese_font()
+            if font_name:
+                plt.rcParams['font.family'] = font_name
+            else:
+                plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'PingFang TC', 'SimHei', 'Arial Unicode MS']
             plt.rcParams['axes.unicode_minus'] = False
             
-            fig, ax = plt.subplots(figsize=(24, 16)) # 大尺寸畫布
+            fig, ax = plt.subplots(figsize=(24, 16))
             
             states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
             colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
@@ -307,21 +362,27 @@ if not df_history.empty:
                     c = fallback_colors[color_idx % len(fallback_colors)]
                     color_idx += 1
                 
-                # 繪製點位
-                ax.scatter(sub_df['X'], sub_df['Y'], label=state, color=c, s=40, zorder=2)
+                ax.scatter(sub_df['X'], sub_df['Y'], label=state, color=c, s=15, zorder=2)
                 
-                # 加入文字 (排除未完成以保持畫面乾淨)
                 if state != '未完成':
                     for _, row in sub_df.iterrows():
-                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=7, ha='center', va='center'))
+                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=8, ha='center', va='center'))
 
-            # 啟動智慧文字防撞演算法 (會自動將重疊文字推開並畫出極細的引導線)
-            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5), ax=ax)
+            ax.margins(0.15)
+            adjust_text(texts, 
+                        ax=ax,
+                        expand_points=(2.5, 2.5),
+                        expand_text=(1.5, 1.5),
+                        arrowprops=dict(arrowstyle='-', color='gray', lw=0.5, alpha=0.8),
+                        max_iterations=300)
             
             ax.set_aspect('equal', adjustable='datalim')
-            ax.axis('off') # 關閉座標與格線
+            ax.axis('off')
             today_str = datetime.date.today().strftime('%Y-%m-%d')
-            plt.title(f'{today_str} 施作進度回報', fontsize=24, pad=20)
+            
+            # 依據是否局部框選來改變標題
+            title_text = f'{today_str} 施作進度回報 (局部圖)' if selected_piles else f'{today_str} 施作進度回報'
+            plt.title(title_text, fontsize=24, pad=20)
             plt.legend(loc='upper right', fontsize=12)
             
             pdf_buf = io.BytesIO()
@@ -329,4 +390,5 @@ if not df_history.empty:
             plt.close(fig)
             return pdf_buf.getvalue()
 
-        st.sidebar.download_button("🔴 匯出 PDF 智慧排版高畫質圖", pdf_gen(df_p), f"Plan_{datetime.date.today()}.pdf", type="primary")
+        # PDF 將依據上方邏輯匯出對應範圍
+        st.sidebar.download_button(pdf_btn_text, pdf_gen(pdf_df), f"Plan_{datetime.date.today()}.pdf", type="primary")
