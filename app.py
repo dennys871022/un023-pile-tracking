@@ -9,8 +9,8 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統 V16", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (穩定同步版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V17", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (自動歸檔版)")
 
 @st.cache_data
 def load_base_data():
@@ -77,28 +77,56 @@ def fetch_current_data(sh_main):
 ss, sh_main, sh_chart = get_gs_connection()
 df_history = fetch_current_data(sh_main)
 
+def process_status_logic(df_hist, df_b):
+    plot_df = df_b[['樁號', 'X', 'Y']].copy()
+    if df_hist.empty:
+        plot_df['狀態'] = '未完成'
+        plot_df['標籤'] = plot_df['樁號']
+        return plot_df
+    
+    hist = df_hist.copy()
+    
+    def label_maker(r):
+        m = str(r.get('機台', 'A'))[0]
+        s = r.get('施作順序', 0)
+        return f"{r['樁號']}({m}{int(s)})"
+    
+    hist['標籤'] = hist.apply(label_maker, axis=1)
+    hist['施工日期_DT'] = pd.to_datetime(hist['施工日期'], errors='coerce')
+    
+    max_date = hist['施工日期_DT'].max()
+    if pd.notna(max_date):
+        monday = max_date - pd.Timedelta(days=max_date.weekday())
+        def set_status(dt):
+            if pd.isna(dt): return '未完成'
+            if dt < monday: return '[已完成]'
+            return dt.strftime('%Y-%m-%d')
+        hist['狀態'] = hist['施工日期_DT'].apply(set_status)
+    else:
+        hist['狀態'] = '未完成'
+        
+    plot_df = plot_df.merge(hist[['樁號', '狀態', '標籤']], on='樁號', how='left')
+    plot_df['狀態'] = plot_df['狀態'].fillna('未完成')
+    plot_df['標籤'] = plot_df['標籤'].fillna(plot_df['樁號'])
+    return plot_df
+
 def sync_to_chart_sheet():
     ss_now, m_now, c_now = get_gs_connection()
     if not ss_now or df_history.empty: return
     
     try:
-        plot_df = df_base[['樁號', 'X', 'Y']].copy()
-        hist = df_history.copy()
-        def label_maker(r):
-            m = str(r.get('機台', 'A'))[0]
-            s = r.get('施作順序', 0)
-            return f"{r['樁號']}({m}{int(s)})"
-        hist['標籤'] = hist.apply(label_maker, axis=1)
-        plot_df = plot_df.merge(hist[['樁號', '施工日期', '標籤']], on='樁號', how='left')
-
+        plot_df = process_status_logic(df_history, df_base)
+        
         gs_matrix = pd.DataFrame()
         gs_matrix['X'] = plot_df['X']
         gs_matrix['標籤'] = plot_df['標籤']
-        gs_matrix['未完成'] = plot_df['Y'].where(plot_df['施工日期'].isna(), None)
         
-        dates = sorted(plot_df['施工日期'].dropna().unique())
-        for d in dates:
-            gs_matrix[str(d)] = plot_df['Y'].where(plot_df['施工日期'] == d, None)
+        gs_matrix['未完成'] = plot_df['Y'].where(plot_df['狀態'] == '未完成', None)
+        gs_matrix['[已完成]'] = plot_df['Y'].where(plot_df['狀態'] == '[已完成]', None)
+        
+        valid_dates = sorted([s for s in plot_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+        for d in valid_dates:
+            gs_matrix[d] = plot_df['Y'].where(plot_df['狀態'] == d, None)
 
         gs_matrix = gs_matrix.astype(object).where(pd.notnull(gs_matrix), None)
         out_data = [gs_matrix.columns.values.tolist()] + gs_matrix.values.tolist()
@@ -183,21 +211,21 @@ with t2:
 
 st.markdown("---")
 st.subheader("🗺️ 現場施工全區圖 (左鍵平移 / 滾輪縮放)")
-df_p = df_base.copy()
-if not df_history.empty:
-    hc = df_history.drop(columns=['X', 'Y', '數字'], errors='ignore')
-    df_p = df_p.merge(hc, on='樁號', how='left')
-    df_p['狀態'] = df_p['施工日期'].fillna('未完成')
-    def lbl_gen(r):
-        if pd.isna(r.get('施作順序')): return r['樁號']
-        m = str(r.get('機台', 'A'))[0]
-        return f"{r['樁號']}({m}{int(r['施作順序'])})"
-    df_p['標籤'] = df_p.apply(lbl_gen, axis=1)
-else:
-    df_p['狀態'] = '未完成'; df_p['標籤'] = df_p['樁號']
+df_p = process_status_logic(df_history, df_base)
 
-fig = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成': '#4F4F4F'})
-fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(width=1, color='white')))
+color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
+colors_seq = px.colors.qualitative.Plotly
+
+fig = px.scatter(
+    df_p, x='X', y='Y', text='標籤', color='狀態',
+    color_discrete_map=color_map,
+    color_discrete_sequence=colors_seq
+)
+fig.update_traces(
+    textposition='top center', 
+    textfont=dict(size=8),
+    marker=dict(size=10, line=dict(width=1, color='white'))
+)
 fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=950, plot_bgcolor='white', dragmode='pan')
 st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
@@ -207,19 +235,38 @@ if not df_history.empty:
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
             h_df.to_excel(wr, sheet_name='施工明細', index=False)
             wb = wr.book; ws = wb.add_worksheet('全區進度圖'); ch = wb.add_chart({'type': 'scatter'})
-            col = 10; und = p_df[p_df['狀態'] == '未完成']
-            if not und.empty:
-                und[['X', 'Y']].to_excel(wr, sheet_name='全區進度圖', startcol=col, index=False)
-                ch.add_series({'name': '未完成', 'categories': ['全區進度圖', 1, col, len(und), col], 'values': ['全區進度圖', 1, col+1, len(und), col+1], 'marker': {'type': 'circle', 'size': 4, 'fill': {'color': '#696969'}, 'border': {'color': '#696969'}}})
-                col += 3
-            dts = h_df['施工日期'].dropna().unique()
-            for d in sorted(dts):
-                dd = p_df[p_df['施工日期'] == d].reset_index(drop=True)
-                if not dd.empty:
-                    dd[['X', 'Y', '標籤']].to_excel(wr, sheet_name='全區進度圖', startcol=col, index=False)
-                    clbls = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(dd))]
-                    ch.add_series({'name': str(d), 'categories': ['全區進度圖', 1, col, len(dd), col], 'values': ['全區進度圖', 1, col+1, len(dd), col+1], 'marker': {'type': 'circle', 'size': 7}, 'data_labels': {'custom': clbls, 'position': 'above'}})
-                    col += 4
+            col = 10
+            
+            states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+            colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
+            fallback_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
+            color_idx = 0
+            
+            for state in states:
+                sub_df = p_df[p_df['狀態'] == state].reset_index(drop=True)
+                if sub_df.empty: continue
+                
+                sub_df[['X', 'Y', '標籤']].to_excel(wr, sheet_name='全區進度圖', startcol=col, index=False)
+                
+                marker_color = colors.get(state)
+                if not marker_color:
+                    marker_color = fallback_colors[color_idx % len(fallback_colors)]
+                    color_idx += 1
+                
+                series_data = {
+                    'name': state,
+                    'categories': ['全區進度圖', 1, col, len(sub_df), col],
+                    'values': ['全區進度圖', 1, col+1, len(sub_df), col+1],
+                    'marker': {'type': 'circle', 'size': 6, 'fill': {'color': marker_color}, 'border': {'color': marker_color}}
+                }
+                
+                if state != '未完成':
+                    clbls = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(sub_df))]
+                    series_data['data_labels'] = {'custom': clbls, 'position': 'above', 'font': {'size': 8}}
+                    
+                ch.add_series(series_data)
+                col += 4
+                
             ch.set_title({'name': '全區進度圖'}); ch.set_size({'width': 2400, 'height': 1500}); ws.insert_chart('B2', ch)
         return out.getvalue()
     st.sidebar.download_button("📥 匯出 Excel 總報表", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="primary")
