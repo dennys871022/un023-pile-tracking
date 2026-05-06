@@ -9,7 +9,7 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="UN023 排樁進度系統 V17", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V18", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (自動歸檔版)")
 
 @st.cache_data
@@ -266,7 +266,12 @@ if not df_history.empty:
                     
                 ch.add_series(series_data)
                 col += 4
-                
-            ch.set_title({'name': '全區進度圖'}); ch.set_size({'width': 2400, 'height': 1500}); ws.insert_chart('B2', ch)
+            
+            # --- 這裡已經將 Excel 圖表標題改為：今日日期 + 施作進度回報 ---
+            today_str = datetime.date.today().strftime('%Y-%m-%d')
+            ch.set_title({'name': f'{today_str} 施作進度回報'})
+            ch.set_size({'width': 2400, 'height': 1500})
+            ws.insert_chart('B2', ch)
+            
         return out.getvalue()
     st.sidebar.download_button("📥 匯出 Excel 總報表", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="primary")
