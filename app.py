@@ -267,10 +267,14 @@ if not df_history.empty:
                 ch.add_series(series_data)
                 col += 4
             
-            # --- 這裡已經將 Excel 圖表標題改為：今日日期 + 施作進度回報 ---
             today_str = datetime.date.today().strftime('%Y-%m-%d')
             ch.set_title({'name': f'{today_str} 施作進度回報'})
             ch.set_size({'width': 2400, 'height': 1500})
+            
+            # 關閉 X 軸與 Y 軸及格線
+            ch.set_x_axis({'visible': False, 'major_gridlines': {'visible': False}})
+            ch.set_y_axis({'visible': False, 'major_gridlines': {'visible': False}})
+            
             ws.insert_chart('B2', ch)
             
         return out.getvalue()
