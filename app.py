@@ -16,7 +16,7 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V25", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V26", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (穩定修復版)")
 
 @st.cache_resource
@@ -219,7 +219,7 @@ with t2:
 st.markdown("---")
 df_p = process_status_logic(df_history, df_base)
 
-# --- 網頁圖表樣式 (加入文字避開機制) ---
+# --- 網頁圖表樣式 (維持不變) ---
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
@@ -256,7 +256,7 @@ if not df_history.empty:
     
     st.sidebar.markdown("### 📥 下載區")
     
-    # 【修復重點1：完全退回您最滿意的 Excel 版本，保證不崩潰】
+    # Excel 匯出 (維持不變)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -285,6 +285,9 @@ if not df_history.empty:
                     'marker': {'type': 'circle', 'size': 6, 'fill': {'color': marker_color}, 'border': {'color': marker_color}}
                 }
                 
+                if state == '未完成':
+                    series_data['marker'] = {'type': 'circle', 'size': 6, 'fill': {'color': 'none'}, 'border': {'color': marker_color}}
+                
                 if state != '未完成':
                     clbls = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(sub_df))]
                     series_data['data_labels'] = {'custom': clbls, 'position': 'above', 'font': {'size': 8}}
@@ -308,12 +311,14 @@ if not df_history.empty:
         if selected_piles:
             pdf_df = df_p[df_p['樁號'].isin(selected_piles)].copy()
             pdf_btn_text = "🔴 匯出 PDF (您框選的局部範圍)"
+            is_local_mode = True
         else:
             pdf_df = df_p.copy()
             pdf_btn_text = "🔴 匯出 PDF (全區圖)"
+            is_local_mode = False
 
-        # 【修復重點2：使用正確語法畫空心圓，加入強制防撞演算法，找回圖例】
-        def pdf_gen(p_df, loc_text, w_est, t_done, c_done, w_start):
+        # --- PDF 智慧繪圖生成器 (加入局部字體放大與圖例放大) ---
+        def pdf_gen(p_df, loc_text, w_est, t_done, c_done, w_start, is_local):
             font_name = setup_chinese_font()
             if font_name: plt.rcParams['font.family'] = font_name
             plt.rcParams['axes.unicode_minus'] = False
@@ -326,6 +331,9 @@ if not df_history.empty:
             fallback_colors = px.colors.qualitative.Plotly
             color_idx = 0
             
+            # 判斷是否為局部出圖，若是，字體放大兩倍 (18)，否則維持原樣 (9)
+            lbl_fontsize = 18 if is_local else 9
+            
             texts = []
             for state in states:
                 sub_df = p_df[p_df['狀態'] == state]
@@ -334,29 +342,29 @@ if not df_history.empty:
                 if state not in colors: color_idx += 1
                 
                 if state == '未完成':
-                    # 修正空心圓語法，避免崩潰
                     ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, zorder=2, label=state)
                 else:
                     ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=state)
+                    # 加入已經格式化好的標籤 (例如: P601(A4))
                     for _, row in sub_df.iterrows():
-                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=9, ha='center', va='center'))
+                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=lbl_fontsize, ha='center', va='center'))
 
             ax.margins(0.1)
             
-            # 強制文字推擠演算法
+            # 強制文字避開點位與互相排斥 (為放大字體增強排斥力與運算次數)
             adjust_text(texts, ax=ax, 
-                        force_points=0.8, expand_points=(1.5, 1.5), 
-                        force_text=0.5, expand_text=(1.2, 1.2),
-                        arrowprops=dict(arrowstyle='-', color='black', lw=0.8, alpha=0.6),
-                        max_iterations=300)
+                        force_points=2.5, expand_points=(2.5, 2.5), 
+                        force_text=1.5, expand_text=(1.5, 1.5),
+                        arrowprops=dict(arrowstyle='-', color='black', lw=1.0, alpha=0.8),
+                        max_iterations=800)
             
             ax.set_aspect('equal', adjustable='datalim')
             ax.axis('off')
             
-            # 找回右上角的圖例
-            ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.05), fontsize=14, markerscale=0.8)
+            # 圖例放大一倍 (fontsize從14->28, markerscale從0.8->1.5)
+            ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.05), fontsize=28, markerscale=1.5)
             
-            # --- 【修復重點3：精準版面文字對齊】 ---
+            # --- 版面文字繪製 ---
             roc_year = datetime.date.today().year - 1911
             today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             
@@ -365,7 +373,6 @@ if not df_history.empty:
             roc_sun_y = sunday.year - 1911
             week_range = f"{w_start}~{roc_sun_y}/{sunday.month:02d}/{sunday.day:02d}"
             
-            # 標題與資訊區塊緊密靠攏
             fig.text(0.05, 0.90, f"{today_str} 施作進度回報", fontsize=50, fontweight='bold')
             
             info_lines = [
@@ -377,7 +384,6 @@ if not df_history.empty:
             ]
             fig.text(0.05, 0.85, "\n".join(info_lines), fontsize=35, linespacing=1.6, va='top')
             
-            # 右上角標題
             fig.text(0.70, 0.95, loc_text, fontsize=55, fontweight='bold', ha='center')
             
             buf = io.BytesIO()
@@ -385,4 +391,4 @@ if not df_history.empty:
             plt.close(fig)
             return buf.getvalue()
 
-        st.sidebar.download_button(pdf_btn_text, pdf_gen(pdf_df, pdf_loc_note, pdf_week_est, pdf_today_done, pdf_cum_done, week_start_str), f"Plan_{datetime.date.today()}.pdf", type="primary")
+        st.sidebar.download_button(pdf_btn_text, pdf_gen(pdf_df, pdf_loc_note, pdf_week_est, pdf_today_done, pdf_cum_done, week_start_str, is_local_mode), f"Plan_{datetime.date.today()}.pdf", type="primary")
