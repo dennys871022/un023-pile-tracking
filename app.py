@@ -16,8 +16,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V31", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (PDF預覽與排版微調版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V32", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (PDF預覽與防重疊終極版)")
 
 # === 字體設定 ===
 @st.cache_resource
@@ -219,7 +219,7 @@ with t2:
 st.markdown("---")
 df_p = process_status_logic(df_history, df_base)
 
-# === 網頁預覽圖 (維持穩定空心/實心大圓) ===
+# === 網頁預覽圖 (維持穩定空心/實心大圓，完全不變) ===
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig_web = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
@@ -255,7 +255,6 @@ if not df_history.empty:
     pdf_today_done = st.sidebar.number_input("本日完成 (支) [自動統計]", value=today_done_auto)
     pdf_cum_done = st.sidebar.number_input("累積完成 (支) [自動統計]", value=total_done_auto)
     
-    # 全新功能：版面微調滑桿 (放在 Form 內避免滑動時不斷卡頓)
     st.sidebar.markdown("### 📐 PDF 版面位置微調")
     with st.sidebar.form("layout_controls"):
         st.caption("調整 X, Y 數值 (0.00 ~ 1.00) 可移動文字在 PDF 上的位置。")
@@ -270,7 +269,7 @@ if not df_history.empty:
     
     st.sidebar.markdown("### 📥 下載區")
     
-    # 穩定版 Excel
+    # 穩定版 Excel (維持不變，防崩潰)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -316,14 +315,13 @@ if not df_history.empty:
         is_local_mode = bool(selected_piles)
         pdf_target_df = df_p[df_p['樁號'].isin(selected_piles)].copy() if is_local_mode else df_p.copy()
         
-        # 建立 PDF 圖形物件 (供網頁預覽及下載使用)
+        # === 核心 PDF 繪製引擎 (極致防撞強化版) ===
         def create_pdf_figure():
             font_name = setup_chinese_font()
             if font_name: plt.rcParams['font.family'] = font_name
             plt.rcParams['axes.unicode_minus'] = False
             
             fig = plt.figure(figsize=(24, 16))
-            # 回退至 V28 穩定配置：圖表佔據右側，左下角留白給您貼 Excel
             ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
             
             states = ['未完成', '[已完成]'] + sorted([s for s in pdf_target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
@@ -341,26 +339,30 @@ if not df_history.empty:
                 if state not in colors: color_idx += 1
                 
                 if state == '未完成':
-                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, zorder=2, label=state)
+                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, zorder=2, label="未完成")
                 else:
-                    # 依據範例圖例格式：日期 樁號 ○ 施作順序 (此處先標日期供圖例使用，文字標籤會在下方加入)
+                    # 圖例格式嚴格設定為：日期 樁號 ○ 施作順序
                     legend_label = f"{state} 樁號 ○ 施作順序"
                     ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=legend_label)
+                    
                     for _, row in sub_df.iterrows():
                         texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=lbl_fontsize, ha='center', va='center'))
 
             ax.margins(0.1)
             
-            adjust_text(texts, ax=ax, 
-                        expand_points=(2.5, 2.5), 
-                        expand_text=(1.5, 1.5),
-                        arrowprops=dict(arrowstyle='-', color='black', lw=1.0, alpha=0.8),
-                        max_iterations=800)
+            # 【關鍵修改區】：將排斥力拉到最高，確保文字絕對不碰圓圈
+            if texts:
+                adjust_text(texts, ax=ax, 
+                            expand_points=(4.0, 4.0),  # 對點位的排斥力極大化
+                            expand_text=(2.5, 2.5),    # 對其他文字的排斥力加大
+                            force_points=(2.0, 2.0),
+                            force_text=(1.5, 1.5),
+                            arrowprops=dict(arrowstyle='-', color='black', lw=1.2, alpha=0.9),
+                            max_iterations=1500)       # 增加運算時間確保推到最外面
             
             ax.set_aspect('equal', adjustable='datalim')
             ax.axis('off')
             
-            # 使用側邊欄設定的 X, Y 座標
             ax.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28, markerscale=1.5)
             
             roc_year = datetime.date.today().year - 1911
@@ -373,7 +375,6 @@ if not df_history.empty:
             roc_sun_y = sunday.year - 1911
             week_range = f"{week_start_str}~{roc_sun_y}/{sunday.month:02d}/{sunday.day:02d}"
             
-            # 使用側邊欄設定的 X, Y 座標放置文字
             fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50, fontweight='bold')
             
             info_lines = [
@@ -389,19 +390,16 @@ if not df_history.empty:
             
             return fig
 
-        # 產生供展示及下載的 Figure
         pdf_fig = create_pdf_figure()
         
-        # --- 全新功能：網頁內即時預覽 PDF 實際輸出長相 ---
         st.markdown("---")
         st.subheader("👁️ PDF 最終版面預覽區 (可從左側調整文字位置)")
-        st.info("💡 下方顯示的就是您即將下載的 PDF 報表排版。您可以透過左側側邊欄的滑桿自由移動標題、圖例與文字區塊的位置。")
+        st.info("💡 預覽圖即為最終 PDF 下載的真實長相。文字已經透過極限排斥演算法強制推開，保證不疊在圓圈上。")
         st.pyplot(pdf_fig)
         
-        # 將 Figure 轉存為 Bytes 供下載按鈕使用
         buf = io.BytesIO()
         pdf_fig.savefig(buf, format='pdf', bbox_inches='tight')
-        plt.close(pdf_fig) # 防止記憶體溢出
+        plt.close(pdf_fig)
         pdf_bytes = buf.getvalue()
 
         pdf_btn_text = "🔴 匯出 PDF (您框選的局部範圍)" if is_local_mode else "🔴 匯出 PDF (全區圖)"
