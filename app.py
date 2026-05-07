@@ -12,13 +12,12 @@ from oauth2client.service_account import ServiceAccountCredentials
 try:
     import matplotlib.pyplot as plt
     from adjustText import adjust_text
-    import matplotlib.gridspec as gridspec
     MATPLOTLIB_READY = True
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V30", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (手繪報表擬真修復版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V31", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (PDF預覽與排版微調版)")
 
 # === 字體設定 ===
 @st.cache_resource
@@ -57,6 +56,7 @@ def load_base_data():
         df['Y'] = pd.to_numeric(df[y_col], errors='coerce')
         return df.drop_duplicates(subset=['樁號']).dropna(subset=['X', 'Y']).sort_values('數字')
     except Exception as e:
+        st.error(f"底圖載入失敗: {e}")
         return None
 
 df_base = load_base_data()
@@ -101,17 +101,17 @@ df_history = fetch_current_data(sh_main)
 total_done_auto = len(df_history)
 today_done_auto = 0
 week_start_str = ""
-today_roc_str = ""
 if not df_history.empty:
     df_history['施工日期_DT'] = pd.to_datetime(df_history['施工日期'], errors='coerce')
     latest_dt = df_history['施工日期_DT'].max()
     today_done_auto = len(df_history[df_history['施工日期_DT'] == latest_dt])
-    today_roc_str = f"{latest_dt.year-1911}/{latest_dt.month:02d}/{latest_dt.day:02d}"
+    
     monday = latest_dt - pd.Timedelta(days=latest_dt.weekday())
     this_week_data = df_history[df_history['施工日期_DT'] >= monday]
     if not this_week_data.empty:
         earliest_this_week = this_week_data['施工日期_DT'].min()
-        week_start_str = f"{earliest_this_week.year-1911}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
+        roc_y = earliest_this_week.year - 1911
+        week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
 
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y']].copy()
@@ -216,9 +216,10 @@ with t2:
                     elif pt.isdigit(): plist.append(f"P{pt}")
             save_data(plist)
 
-st.markdown("==========")
+st.markdown("---")
 df_p = process_status_logic(df_history, df_base)
 
+# === 網頁預覽圖 (維持穩定空心/實心大圓) ===
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig_web = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
@@ -237,6 +238,7 @@ fig_web.update_traces(
 )
 fig_web.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white', dragmode='pan')
 
+st.subheader("🗺️ 網頁選取區 (框選範圍即可針對該區生成PDF)")
 try:
     selection_event = st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True}, on_select="rerun", selection_mode=('box', 'lasso'))
     selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]] if selection_event and "selection" in selection_event and selection_event["selection"]["points"] else []
@@ -244,23 +246,31 @@ except:
     st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True})
     selected_piles = []
 
-# === PDF 報表自訂與下載 ===
+# === PDF 報表自訂與版面位置調整 ===
 if not df_history.empty:
-    st.sidebar.markdown("==========")
-    st.sidebar.markdown("### 📄 PDF 報表自訂內容")
-    pdf_loc_note = st.sidebar.text_input("右上角位置", "滯洪池BC")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📄 PDF 報表文字內容")
+    pdf_loc_note = st.sidebar.text_input("右上角位置標題", "滯洪池BC")
     pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
-    pdf_today_done = st.sidebar.number_input("本日完成 (支)", value=today_done_auto)
-    pdf_cum_done = st.sidebar.number_input("累積完成 (支)", value=total_done_auto)
-    pdf_comment = st.sidebar.text_area("下方備註", "下午1:00~3:30油管破裂，導致下午只完成3支樁")
+    pdf_today_done = st.sidebar.number_input("本日完成 (支) [自動統計]", value=today_done_auto)
+    pdf_cum_done = st.sidebar.number_input("累積完成 (支) [自動統計]", value=total_done_auto)
     
-    st.sidebar.markdown("#### 📊 表格數據設定")
-    tab_total_days = st.sidebar.number_input("預計施工總天數", value=100)
-    tab_daily_target = st.sidebar.number_input("預計平均支數/日", value=6.5, step=0.1)
-    tab_concrete_used = st.sidebar.number_input("今日水泥用量 (m3)", value=21.0)
+    # 全新功能：版面微調滑桿 (放在 Form 內避免滑動時不斷卡頓)
+    st.sidebar.markdown("### 📐 PDF 版面位置微調")
+    with st.sidebar.form("layout_controls"):
+        st.caption("調整 X, Y 數值 (0.00 ~ 1.00) 可移動文字在 PDF 上的位置。")
+        pos_title_y = st.slider("大標題 高度 (Y)", 0.0, 1.0, 0.90, 0.01)
+        pos_info_x = st.slider("統計資訊 左右 (X)", 0.0, 1.0, 0.05, 0.01)
+        pos_info_y = st.slider("統計資訊 高度 (Y)", 0.0, 1.0, 0.85, 0.01)
+        pos_loc_x = st.slider("右上角標題 左右 (X)", 0.0, 1.0, 0.70, 0.01)
+        pos_loc_y = st.slider("右上角標題 高度 (Y)", 0.0, 1.0, 0.95, 0.01)
+        pos_leg_x = st.slider("圖例 左右 (X)", 0.0, 1.5, 1.15, 0.01)
+        pos_leg_y = st.slider("圖例 高度 (Y)", 0.0, 1.5, 1.05, 0.01)
+        st.form_submit_button("🔄 套用排版並更新下方預覽圖")
     
     st.sidebar.markdown("### 📥 下載區")
     
+    # 穩定版 Excel
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -271,7 +281,6 @@ if not df_history.empty:
             colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
             fallback_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
             color_idx = 0
-            
             for state in states:
                 sub_df = p_df[p_df['狀態'] == state].reset_index(drop=True)
                 if sub_df.empty: continue
@@ -293,7 +302,6 @@ if not df_history.empty:
                     series_data['data_labels'] = {'custom': clbls, 'position': 'above', 'font': {'size': 8}}
                 ch.add_series(series_data)
                 col += 4
-            
             today_str = datetime.date.today().strftime('%Y-%m-%d')
             ch.set_title({'name': f'{today_str} 施作進度回報'})
             ch.set_size({'width': 2400, 'height': 1500})
@@ -305,86 +313,96 @@ if not df_history.empty:
     st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="secondary")
 
     if MATPLOTLIB_READY:
-        def pdf_gen_v30(p_df, loc, w_est, t_done, c_done, w_start, comment, sel_piles):
+        is_local_mode = bool(selected_piles)
+        pdf_target_df = df_p[df_p['樁號'].isin(selected_piles)].copy() if is_local_mode else df_p.copy()
+        
+        # 建立 PDF 圖形物件 (供網頁預覽及下載使用)
+        def create_pdf_figure():
             font_name = setup_chinese_font()
             if font_name: plt.rcParams['font.family'] = font_name
             plt.rcParams['axes.unicode_minus'] = False
             
-            fig = plt.figure(figsize=(24, 18))
-            gs = gridspec.GridSpec(2, 2, width_ratios=[1, 1.2], height_ratios=[1, 0.15])
+            fig = plt.figure(figsize=(24, 16))
+            # 回退至 V28 穩定配置：圖表佔據右側，左下角留白給您貼 Excel
+            ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
             
-            ax_map = fig.add_subplot(gs[0, 1])
-            target_df = p_df[p_df['樁號'].isin(sel_piles)].copy() if sel_piles else p_df.copy()
+            states = ['未完成', '[已完成]'] + sorted([s for s in pdf_target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+            colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}
+            fallback_colors = px.colors.qualitative.Plotly
+            color_idx = 0
             
-            states = ['未完成', '[已完成]'] + sorted([s for s in target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
-            color_palette = px.colors.qualitative.Plotly
-            colors = {'未完成': '#D3D3D3', '[已完成]': '#FFB6C1'}
+            lbl_fontsize = 18 if is_local_mode else 9
             
             texts = []
-            for i, state in enumerate(states):
-                sub = target_df[target_df['狀態'] == state]
-                if sub.empty: continue
-                c = colors.get(state, color_palette[i % len(color_palette)])
+            for state in states:
+                sub_df = pdf_target_df[pdf_target_df['狀態'] == state]
+                if sub_df.empty: continue
+                c = colors.get(state, fallback_colors[color_idx % len(fallback_colors)])
+                if state not in colors: color_idx += 1
                 
                 if state == '未完成':
-                    ax_map.scatter(sub['X'], sub['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, alpha=0.5)
+                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, zorder=2, label=state)
                 else:
-                    ax_map.scatter(sub['X'], sub['Y'], color=c, s=200, zorder=3, label=f"{state} 樁號 ○ 施作順序")
-                    for _, row in sub.iterrows():
-                        texts.append(ax_map.text(row['X'], row['Y'], row['標籤'], fontsize=12, fontweight='bold', color=c))
+                    # 依據範例圖例格式：日期 樁號 ○ 施作順序 (此處先標日期供圖例使用，文字標籤會在下方加入)
+                    legend_label = f"{state} 樁號 ○ 施作順序"
+                    ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=legend_label)
+                    for _, row in sub_df.iterrows():
+                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=lbl_fontsize, ha='center', va='center'))
 
-            adjust_text(texts, ax=ax_map, expand_points=(1.8, 1.8), arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
-            ax_map.set_aspect('equal')
-            ax_map.axis('off')
-            ax_map.set_title(loc, loc='right', fontsize=55, fontweight='bold', pad=20)
-            ax_map.legend(loc='upper right', bbox_to_anchor=(1, 1.05), fontsize=18, frameon=False)
-
-            ax_text = fig.add_subplot(gs[0, 0])
-            ax_text.axis('off')
+            ax.margins(0.1)
             
-            roc_today = f"{datetime.date.today().year-1911}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
-            ax_text.text(0, 0.95, f"{roc_today} 施作進度回報", fontsize=55, fontweight='bold')
+            adjust_text(texts, ax=ax, 
+                        expand_points=(2.5, 2.5), 
+                        expand_text=(1.5, 1.5),
+                        arrowprops=dict(arrowstyle='-', color='black', lw=1.0, alpha=0.8),
+                        max_iterations=800)
+            
+            ax.set_aspect('equal', adjustable='datalim')
+            ax.axis('off')
+            
+            # 使用側邊欄設定的 X, Y 座標
+            ax.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28, markerscale=1.5)
+            
+            roc_year = datetime.date.today().year - 1911
+            today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             
             latest_dt = pd.to_datetime(df_history['施工日期'], errors='coerce').max()
             if pd.isna(latest_dt):
                 latest_dt = datetime.date.today()
             sunday = latest_dt + datetime.timedelta(days=(6 - latest_dt.weekday()))
-            week_range = f"{w_start}~{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
+            roc_sun_y = sunday.year - 1911
+            week_range = f"{week_start_str}~{roc_sun_y}/{sunday.month:02d}/{sunday.day:02d}"
             
-            summary_txt = (
-                f"本週預計完成 {w_est} 支\n"
-                f"{week_range}\n"
-                f"本日完成 {t_done} 支\n"
-                f"{roc_today}\n"
-                f"累積完成 {c_done} 支"
-            )
-            ax_text.text(0.05, 0.88, summary_txt, fontsize=30, linespacing=1.6, va='top')
-
-            table_data = [
-                ["結構預估每日施工進度", ""],
-                ["預計開始時間", "2026/5/6 前期作業工期", "2026/5/5"],
-                ["預計施作完工日", f"{tab_total_days} 個施作天數", "2026/8/13"],
-                ["隔日預計完工日", f"{613-c_done} 剩餘施作支數", "尚未計算"],
-                ["預估每日進度(支/日)", f"{tab_daily_target} 本日施作目標(支)", f"{t_done}"],
-                ["材料使用情形", "", ""],
-                ["今日用量(m3)", f"{tab_concrete_used} 今日水泥用量(m3)", f"{tab_concrete_used}"],
+            # 使用側邊欄設定的 X, Y 座標放置文字
+            fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50, fontweight='bold')
+            
+            info_lines = [
+                f"本週預計完成 {pdf_week_est} 支",
+                f"{week_range}",
+                f"本日完成 {pdf_today_done} 支",
+                f"{today_str}",
+                f"累積完成 {pdf_cum_done} 支"
             ]
+            fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35, linespacing=1.6, va='top')
             
-            table = ax_text.table(cellText=table_data, loc='bottom', cellLoc='left', bbox=[0, 0.05, 0.95, 0.5])
-            table.auto_set_font_size(False)
-            table.set_fontsize(18)
-            for i in range(len(table_data)):
-                for j in range(len(table_data[0])):
-                    table[(i,j)].set_height(0.06)
-                    if i == 0 or i == 5: table[(i,j)].set_facecolor('#E0E0E0')
+            fig.text(pos_loc_x, pos_loc_y, pdf_loc_note, fontsize=55, fontweight='bold', ha='center')
+            
+            return fig
 
-            ax_note = fig.add_subplot(gs[1, :])
-            ax_note.axis('off')
-            ax_note.text(0, 0.5, f"備註：{comment}", fontsize=25, fontweight='bold', bbox=dict(facecolor='none', edgecolor='black', pad=10))
+        # 產生供展示及下載的 Figure
+        pdf_fig = create_pdf_figure()
+        
+        # --- 全新功能：網頁內即時預覽 PDF 實際輸出長相 ---
+        st.markdown("---")
+        st.subheader("👁️ PDF 最終版面預覽區 (可從左側調整文字位置)")
+        st.info("💡 下方顯示的就是您即將下載的 PDF 報表排版。您可以透過左側側邊欄的滑桿自由移動標題、圖例與文字區塊的位置。")
+        st.pyplot(pdf_fig)
+        
+        # 將 Figure 轉存為 Bytes 供下載按鈕使用
+        buf = io.BytesIO()
+        pdf_fig.savefig(buf, format='pdf', bbox_inches='tight')
+        plt.close(pdf_fig) # 防止記憶體溢出
+        pdf_bytes = buf.getvalue()
 
-            buf = io.BytesIO()
-            plt.savefig(buf, format='pdf', bbox_inches='tight')
-            plt.close(fig)
-            return buf.getvalue()
-
-        st.sidebar.download_button("🔴 匯出 115年擬真工程報表 (PDF)", pdf_gen_v30(df_p, pdf_loc_note, pdf_week_est, pdf_today_done, pdf_cum_done, week_start_str, pdf_comment, selected_piles), f"Progress_Report_{datetime.date.today()}.pdf", type="primary")
+        pdf_btn_text = "🔴 匯出 PDF (您框選的局部範圍)" if is_local_mode else "🔴 匯出 PDF (全區圖)"
+        st.sidebar.download_button(pdf_btn_text, pdf_bytes, f"Plan_{datetime.date.today()}.pdf", type="primary")
