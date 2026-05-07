@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V36", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (自訂間距防撞版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V37", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (本日重點標註版)")
 
 # === 字體設定 ===
 @st.cache_resource
@@ -67,19 +67,11 @@ def get_gs_connection():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         ss = client.open_by_url(st.secrets["sheet_url"])
-        try:
-            sh_main = ss.worksheet("施工明細")
-        except:
-            sh_main = ss.add_worksheet("施工明細", 1000, 20)
-            sh_main.append_row(['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
-        try:
-            sh_chart = ss.worksheet("系統繪圖區")
-        except:
-            sh_chart = ss.add_worksheet("系統繪圖區", 700, 60)
-        return ss, sh_main, sh_chart
+        sh_main = ss.worksheet("施工明細")
+        return ss, sh_main
     except Exception as e:
         st.error(f"雲端連線異常: {e}")
-        return None, None, None
+        return None, None
 
 def fetch_current_data(sh_main):
     if sh_main is None: return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
@@ -93,17 +85,20 @@ def fetch_current_data(sh_main):
     except:
         return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
 
-ss, sh_main, sh_chart = get_gs_connection()
+ss, sh_main = get_gs_connection()
 df_history = fetch_current_data(sh_main)
 
 # === 動態統計邏輯 ===
 total_done_auto = len(df_history)
 today_done_auto = 0
 week_start_str = ""
+today_state_key = "" # 用來標記本日進度在圖表中的 Key (格式: 05/07)
+
 if not df_history.empty:
     df_history['施工日期_DT'] = pd.to_datetime(df_history['施工日期'], errors='coerce')
     latest_dt = df_history['施工日期_DT'].max()
     today_done_auto = len(df_history[df_history['施工日期_DT'] == latest_dt])
+    today_state_key = latest_dt.strftime('%m/%d')
     
     monday = latest_dt - pd.Timedelta(days=latest_dt.weekday())
     this_week_data = df_history[df_history['施工日期_DT'] >= monday]
@@ -112,47 +107,32 @@ if not df_history.empty:
         roc_y = earliest_this_week.year - 1911
         week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
 
-# === 【幾何方位判定與合併】 ===
+# === 幾何方位判定 ===
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy()
-    
     plot_df = plot_df.sort_values('數字').reset_index(drop=True)
     
-    # 支援 Streamlit 雲端最新版 pandas 語法
     dx = plot_df['X'].diff().bfill()
     dy = plot_df['Y'].diff().bfill()
     dx_fwd = (plot_df['X'].shift(-1) - plot_df['X']).ffill()
     dy_fwd = (plot_df['Y'].shift(-1) - plot_df['Y']).ffill()
-    
     dx_avg = dx + dx_fwd
     dy_avg = dy + dy_fwd
     plot_df['is_horizontal'] = dx_avg.abs() >= dy_avg.abs()
     
     if df_hist.empty:
-        plot_df['狀態'] = '未完成'
-        plot_df['標籤'] = plot_df['樁號']
-        plot_df['純順序'] = ""
+        plot_df['狀態'] = '未完成'; plot_df['標籤'] = plot_df['樁號']; plot_df['純順序'] = ""
         return plot_df
         
     hist = df_hist.copy()
-    def label_maker(r):
-        m = str(r.get('機台', 'A'))[0]
-        s = r.get('施作順序', 0)
-        return f"{r['樁號']}({m}{int(s)})"
-    
-    hist['標籤'] = hist.apply(label_maker, axis=1)
+    hist['標籤'] = hist.apply(lambda r: f"{r['樁號']}({str(r.get('機台','A'))[0]}{int(r.get('施作順序',0))})", axis=1)
     hist['純順序'] = hist.apply(lambda r: f"({str(r.get('機台','A'))[0]}{int(r.get('施作順序',0))})", axis=1)
     hist['施工日期_DT'] = pd.to_datetime(hist['施工日期'], errors='coerce')
-    
     max_date = hist['施工日期_DT'].max()
     monday = max_date - pd.Timedelta(days=max_date.weekday())
     
-    def set_status(dt):
-        if pd.isna(dt): return '未完成'
-        if dt < monday: return '[已完成]'
-        return dt.strftime('%Y-%m-%d')
+    hist['狀態'] = hist['施工日期_DT'].apply(lambda dt: '未完成' if pd.isna(dt) else ('[已完成]' if dt < monday else dt.strftime('%m/%d')))
     
-    hist['狀態'] = hist['施工日期_DT'].apply(set_status)
     plot_df = plot_df.merge(hist[['樁號', '狀態', '標籤', '純順序']], on='樁號', how='left')
     plot_df['狀態'] = plot_df['狀態'].fillna('未完成')
     plot_df['標籤'] = plot_df['標籤'].fillna(plot_df['樁號'])
@@ -161,32 +141,7 @@ def process_status_logic(df_hist, df_b):
 
 df_p = process_status_logic(df_history, df_base)
 
-def sync_to_chart_sheet():
-    ss_now, m_now, c_now = get_gs_connection()
-    if not ss_now or df_history.empty: return
-    try:
-        plot_df = process_status_logic(df_history, df_base)
-        gs_matrix = pd.DataFrame()
-        gs_matrix['X'] = plot_df['X']
-        gs_matrix['標籤'] = plot_df['標籤']
-        gs_matrix['未完成'] = plot_df['Y'].where(plot_df['狀態'] == '未完成', None)
-        gs_matrix['[已完成]'] = plot_df['Y'].where(plot_df['狀態'] == '[已完成]', None)
-        valid_dates = sorted([s for s in plot_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
-        for d in valid_dates:
-            gs_matrix[d] = plot_df['Y'].where(plot_df['狀態'] == d, None)
-        gs_matrix = gs_matrix.astype(object).where(pd.notnull(gs_matrix), None)
-        out_data = [gs_matrix.columns.values.tolist()] + gs_matrix.values.tolist()
-        c_now.clear()
-        c_now.update("A1", out_data)
-        st.success("✅ 雲端繪圖數據已同步")
-    except Exception as e:
-        st.error(f"同步失敗: {e}")
-
 # === UI 介面 ===
-st.sidebar.header("📂 備份與同步")
-if st.sidebar.button("🔄 手動同步雲端數據"):
-    sync_to_chart_sheet()
-
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = c1.date_input("日期")
@@ -208,7 +163,6 @@ def save_data(piles):
             new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
     if new_d:
         sh_main.append_rows(new_d)
-        sync_to_chart_sheet()
         st.rerun()
 
 t1, t2 = st.tabs(["🎯 推算", "✏️ 手動"])
@@ -237,24 +191,11 @@ with t2:
             save_data(plist)
 
 st.markdown("---")
-
-# === 網頁圖表樣式 ===
-color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
-fig_web = px.scatter(
-    df_p, x='X', y='Y', text='標籤', color='狀態',
-    color_discrete_map=color_map, color_discrete_sequence=px.colors.qualitative.Plotly,
-    custom_data=['樁號']
-)
-fig_web.update_traces(
-    selector=dict(name='未完成'),
-    marker=dict(symbol='circle-open', size=16, line=dict(width=2, color='#A9A9A9')),
-    textposition='top right'
-)
-fig_web.update_traces(
-    selector=lambda t: t.name != '未完成',
-    marker=dict(symbol='circle', size=16, line=dict(width=1, color='white')),
-    textposition='top right'
-)
+# === 網頁預覽 (維持原樣) ===
+color_map_web = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
+fig_web = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map=color_map_web, custom_data=['樁號'])
+fig_web.update_traces(selector=dict(name='未完成'), marker=dict(symbol='circle-open', size=16, line=dict(width=2, color='#A9A9A9')), textposition='top right')
+fig_web.update_traces(selector=lambda t: t.name != '未完成', marker=dict(symbol='circle', size=16, line=dict(width=1, color='white')), textposition='top right')
 fig_web.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white', dragmode='pan')
 
 st.subheader("🗺️ 網頁選取區 (框選範圍即可生成局部 PDF)")
@@ -265,26 +206,24 @@ except:
     st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True})
     selected_piles = []
 
-# === PDF 報表自訂與排版滑桿 ===
+# === PDF 報表自訂內容 ===
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
     pdf_loc_note = st.sidebar.text_input("右上角位置標題", "滯洪池BC")
     pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
-    pdf_today_done = st.sidebar.number_input("本日完成 (支)", value=today_done_auto)
-    pdf_cum_done = st.sidebar.number_input("累積完成 (支)", value=total_done_auto)
+    pdf_today_done = st.sidebar.number_input("本日完成 (支) [自動統計]", value=today_done_auto)
+    pdf_cum_done = st.sidebar.number_input("累積完成 (支) [自動統計]", value=total_done_auto)
     
-    # 【全新加入：幾何比例與間距控制區】
-    st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調 (解決重疊)")
+    st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調")
     with st.sidebar.form("geom_controls"):
-        st.caption("若點位太密集，可調大「畫布放大倍率」將點位拉開；或縮小圓圈與文字。")
         fig_scale = st.slider("畫布排樁間距拉開倍率", 1.0, 5.0, 1.5, 0.1)
         marker_size = st.slider("圓圈大小", 50, 400, 180, 10)
         lbl_fontsize = st.slider("樁號文字大小", 8, 40, 18, 1)
         text_offset = st.slider("文字離圓圈距離", 5, 60, 20, 1)
         st.form_submit_button("🔄 套用幾何設定")
 
-    st.sidebar.markdown("### 📐 PDF 大標題位置微調")
+    st.sidebar.markdown("### 📐 PDF 文字位置微調")
     with st.sidebar.form("layout_controls"):
         pos_title_y = st.slider("大標題 高度 (Y)", 0.0, 1.0, 0.90, 0.01)
         pos_info_x = st.slider("統計資訊 左右 (X)", 0.0, 1.0, 0.05, 0.01)
@@ -304,7 +243,6 @@ if not df_history.empty:
             if font_name: plt.rcParams['font.family'] = font_name
             plt.rcParams['axes.unicode_minus'] = False
             
-            # 【關鍵】將 figsize 乘上使用者設定的放大倍率，物理拉開所有點位間距
             fig = plt.figure(figsize=(24 * fig_scale, 16 * fig_scale))
             ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
             
@@ -321,38 +259,27 @@ if not df_history.empty:
                 
                 if state == '未完成':
                     ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=marker_size, lw=1.5, zorder=2, label="未完成")
-                    # 未完成的點位，完全略過文字繪製，畫面保持乾淨
-                    continue
                 else:
                     legend_label = f"{state} 樁號 ○ 施作順序"
                     ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=marker_size, zorder=3, label=legend_label)
                     
-                    # 使用絕對座標系推移，根據幾何判定放置文字位置
-                    for _, row in sub_df.iterrows():
-                        is_horiz = row['is_horizontal']
-                        p_text = row['樁號']
-                        s_text = row['純順序']
-                        
-                        if is_horiz:
-                            # 水平排法：樁號在上，順序在下
-                            ax.annotate(p_text, (row['X'], row['Y']), xytext=(0, text_offset), textcoords='offset points',
-                                        fontsize=lbl_fontsize, fontweight='bold', color='black', ha='center', va='bottom', zorder=4)
-                            if s_text:
-                                ax.annotate(s_text, (row['X'], row['Y']), xytext=(0, -text_offset), textcoords='offset points',
-                                            fontsize=lbl_fontsize, color=c, ha='center', va='top', zorder=4)
-                        else:
-                            # 垂直排法：樁號在左，順序在右
-                            ax.annotate(p_text, (row['X'], row['Y']), xytext=(-text_offset, 0), textcoords='offset points',
-                                        fontsize=lbl_fontsize, fontweight='bold', color='black', ha='right', va='center', zorder=4)
-                            if s_text:
-                                ax.annotate(s_text, (row['X'], row['Y']), xytext=(text_offset, 0), textcoords='offset points',
-                                            fontsize=lbl_fontsize, color=c, ha='left', va='center', zorder=4)
+                    # 【核心邏輯更新】：僅針對「本日進度 (today_state_key)」顯示文字
+                    if state == today_state_key:
+                        for _, row in sub_df.iterrows():
+                            is_horiz = row['is_horizontal']
+                            p_text = row['樁號']
+                            s_text = row['純順序']
+                            
+                            if is_horiz:
+                                ax.annotate(p_text, (row['X'], row['Y']), xytext=(0, text_offset), textcoords='offset points', fontsize=lbl_fontsize, fontweight='bold', color='black', ha='center', va='bottom', zorder=4)
+                                if s_text:
+                                    ax.annotate(s_text, (row['X'], row['Y']), xytext=(0, -text_offset), textcoords='offset points', fontsize=lbl_fontsize, color=c, ha='center', va='top', zorder=4)
+                            else:
+                                ax.annotate(p_text, (row['X'], row['Y']), xytext=(-text_offset, 0), textcoords='offset points', fontsize=lbl_fontsize, fontweight='bold', color='black', ha='right', va='center', zorder=4)
+                                if s_text:
+                                    ax.annotate(s_text, (row['X'], row['Y']), xytext=(text_offset, 0), textcoords='offset points', fontsize=lbl_fontsize, color=c, ha='left', va='center', zorder=4)
 
-            ax.margins(0.1)
-            ax.set_aspect('equal', adjustable='datalim')
-            ax.axis('off')
-            
-            # 【關鍵】UI 文字大小與畫布同步放大，確保看起來比例依然協調
+            ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
             ax.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
             
             roc_year = datetime.date.today().year - 1911
@@ -360,8 +287,7 @@ if not df_history.empty:
             latest_dt = pd.to_datetime(df_history['施工日期'], errors='coerce').max()
             if pd.isna(latest_dt): latest_dt = datetime.date.today()
             sunday = latest_dt + datetime.timedelta(days=(6 - latest_dt.weekday()))
-            roc_sun_y = sunday.year - 1911
-            week_range = f"{week_start_str}~{roc_sun_y}/{sunday.month:02d}/{sunday.day:02d}"
+            week_range = f"{week_start_str}~{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
             
             fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
             info_lines = [f"本週預計完成 {pdf_week_est} 支", f"{week_range}", f"本日完成 {pdf_today_done} 支", f"{today_str}", f"累積完成 {pdf_cum_done} 支"]
@@ -371,7 +297,8 @@ if not df_history.empty:
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區 (請嘗試拉大「排樁間距拉開倍率」)")
+        st.subheader("👁️ PDF 最終版面預覽區 (僅標註本日進度)")
+        st.info("💡 預覽圖顯示：本日進度標註文字，先前進度僅保留實心圓圈顏色。若轉角處仍顯擠，請拉大「排樁間距拉開倍率」。")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
@@ -383,7 +310,7 @@ if not df_history.empty:
         pdf_btn_text = "🔴 匯出 PDF (局部範圍)" if is_local_mode else "🔴 匯出 PDF (全區圖)"
         st.sidebar.download_button(pdf_btn_text, pdf_bytes, f"Plan_{datetime.date.today()}.pdf", type="primary")
 
-    # Excel 穩定版 (保持不變)
+    # Excel 生成 (保持穩定)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -407,8 +334,6 @@ if not df_history.empty:
                     series_data['data_labels'] = {'custom': clbls, 'position': 'above', 'font': {'size': 8}}
                 ch.add_series(series_data)
                 col += 4
-            ch.set_x_axis({'visible': False}); ch.set_y_axis({'visible': False})
-            ws.insert_chart('B2', ch)
+            ch.set_x_axis({'visible': False}); ch.set_y_axis({'visible': False}); ws.insert_chart('B2', ch)
         return out.getvalue()
-    
-    st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="secondary")
+    st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx")
