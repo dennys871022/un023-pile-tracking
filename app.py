@@ -16,7 +16,7 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V26", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V27", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (穩定修復版)")
 
 @st.cache_resource
@@ -97,7 +97,6 @@ def fetch_current_data(sh_main):
 ss, sh_main, sh_chart = get_gs_connection()
 df_history = fetch_current_data(sh_main)
 
-# --- 核心邏輯：動態統計 ---
 total_done_auto = len(df_history)
 today_done_auto = 0
 week_start_str = ""
@@ -162,7 +161,6 @@ def sync_to_chart_sheet():
     except Exception as e:
         st.error(f"同步失敗: {e}")
 
-# --- UI 介面 ---
 st.sidebar.header("📂 備份與同步")
 if st.sidebar.button("🔄 手動同步雲端數據"):
     sync_to_chart_sheet()
@@ -219,7 +217,6 @@ with t2:
 st.markdown("---")
 df_p = process_status_logic(df_history, df_base)
 
-# --- 網頁圖表樣式 (維持不變) ---
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
@@ -245,7 +242,6 @@ except:
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
     selected_piles = []
 
-# --- 報表自訂內容與下載區 ---
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📄 PDF 報表自訂內容")
@@ -256,7 +252,6 @@ if not df_history.empty:
     
     st.sidebar.markdown("### 📥 下載區")
     
-    # Excel 匯出 (維持不變)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -317,7 +312,6 @@ if not df_history.empty:
             pdf_btn_text = "🔴 匯出 PDF (全區圖)"
             is_local_mode = False
 
-        # --- PDF 智慧繪圖生成器 (加入局部字體放大與圖例放大) ---
         def pdf_gen(p_df, loc_text, w_est, t_done, c_done, w_start, is_local):
             font_name = setup_chinese_font()
             if font_name: plt.rcParams['font.family'] = font_name
@@ -331,7 +325,6 @@ if not df_history.empty:
             fallback_colors = px.colors.qualitative.Plotly
             color_idx = 0
             
-            # 判斷是否為局部出圖，若是，字體放大兩倍 (18)，否則維持原樣 (9)
             lbl_fontsize = 18 if is_local else 9
             
             texts = []
@@ -345,26 +338,22 @@ if not df_history.empty:
                     ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, zorder=2, label=state)
                 else:
                     ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=state)
-                    # 加入已經格式化好的標籤 (例如: P601(A4))
                     for _, row in sub_df.iterrows():
                         texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=lbl_fontsize, ha='center', va='center'))
 
             ax.margins(0.1)
             
-            # 強制文字避開點位與互相排斥 (為放大字體增強排斥力與運算次數)
             adjust_text(texts, ax=ax, 
-                        force_points=2.5, expand_points=(2.5, 2.5), 
-                        force_text=1.5, expand_text=(1.5, 1.5),
+                        expand_points=(2.5, 2.5), 
+                        expand_text=(1.5, 1.5),
                         arrowprops=dict(arrowstyle='-', color='black', lw=1.0, alpha=0.8),
                         max_iterations=800)
             
             ax.set_aspect('equal', adjustable='datalim')
             ax.axis('off')
             
-            # 圖例放大一倍 (fontsize從14->28, markerscale從0.8->1.5)
             ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.05), fontsize=28, markerscale=1.5)
             
-            # --- 版面文字繪製 ---
             roc_year = datetime.date.today().year - 1911
             today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             
