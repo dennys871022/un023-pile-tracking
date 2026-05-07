@@ -16,8 +16,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V24", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (完美版面客製版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V25", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (穩定修復版)")
 
 @st.cache_resource
 def setup_chinese_font():
@@ -219,20 +219,18 @@ with t2:
 st.markdown("---")
 df_p = process_status_logic(df_history, df_base)
 
-# --- 網頁圖表樣式：加大圓圈防重疊 ---
+# --- 網頁圖表樣式 (加入文字避開機制) ---
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
     color_discrete_map=color_map, color_discrete_sequence=px.colors.qualitative.Plotly,
     custom_data=['樁號']
 )
-# 設定未完成為大號空心圓
 fig.update_traces(
     selector=dict(name='未完成'),
     marker=dict(symbol='circle-open', size=16, line=dict(width=2, color='#A9A9A9')),
-    textposition='top right' # 強制避開圓圈中心
+    textposition='top right'
 )
-# 設定已完成與日期為實心圓
 fig.update_traces(
     selector=lambda t: t.name != '未完成',
     marker=dict(symbol='circle', size=16, line=dict(width=1, color='white')),
@@ -247,7 +245,7 @@ except:
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
     selected_piles = []
 
-# --- PDF 報表自訂內容 ---
+# --- 報表自訂內容與下載區 ---
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📄 PDF 報表自訂內容")
@@ -258,7 +256,7 @@ if not df_history.empty:
     
     st.sidebar.markdown("### 📥 下載區")
     
-    # 完美復原 Excel 生成器 (不破壞任何格式、包含圓圈、隱藏座標軸)
+    # 【修復重點1：完全退回您最滿意的 Excel 版本，保證不崩潰】
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -280,17 +278,12 @@ if not df_history.empty:
                     marker_color = fallback_colors[color_idx % len(fallback_colors)]
                     color_idx += 1
                 
-                # Excel 繪圖核心設定 (完全復原版)
                 series_data = {
                     'name': state,
                     'categories': ['全區進度圖', 1, col, len(sub_df), col],
                     'values': ['全區進度圖', 1, col+1, len(sub_df), col+1],
                     'marker': {'type': 'circle', 'size': 6, 'fill': {'color': marker_color}, 'border': {'color': marker_color}}
                 }
-                
-                # Excel 未完成空心圓設定
-                if state == '未完成':
-                    series_data['marker'] = {'type': 'circle', 'size': 6, 'fill': {'color': 'none'}, 'border': {'color': marker_color}}
                 
                 if state != '未完成':
                     clbls = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(sub_df))]
@@ -319,15 +312,13 @@ if not df_history.empty:
             pdf_df = df_p.copy()
             pdf_btn_text = "🔴 匯出 PDF (全區圖)"
 
-        # PDF 智慧繪圖生成器
+        # 【修復重點2：使用正確語法畫空心圓，加入強制防撞演算法，找回圖例】
         def pdf_gen(p_df, loc_text, w_est, t_done, c_done, w_start):
             font_name = setup_chinese_font()
             if font_name: plt.rcParams['font.family'] = font_name
             plt.rcParams['axes.unicode_minus'] = False
             
             fig = plt.figure(figsize=(24, 16))
-            
-            # 讓出左半邊給文字，圖表放在右側
             ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
             
             states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
@@ -342,30 +333,30 @@ if not df_history.empty:
                 c = colors.get(state, fallback_colors[color_idx % len(fallback_colors)])
                 if state not in colors: color_idx += 1
                 
-                # 增大點位(s=180)，呈現相切效果
                 if state == '未完成':
-                    ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, facecolors='none', edgecolors=c, lw=1.5, zorder=2, label=state)
+                    # 修正空心圓語法，避免崩潰
+                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, zorder=2, label=state)
                 else:
                     ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=state)
-                    # 放入文字標籤，準備交給防撞演算法處理
                     for _, row in sub_df.iterrows():
                         texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=9, ha='center', va='center'))
 
             ax.margins(0.1)
             
-            # 暴力防撞演算法：強迫文字離開點的中心，並帶上指示線
+            # 強制文字推擠演算法
             adjust_text(texts, ax=ax, 
                         force_points=0.8, expand_points=(1.5, 1.5), 
                         force_text=0.5, expand_text=(1.2, 1.2),
-                        arrowprops=dict(arrowstyle='-', color='black', lw=0.8, alpha=0.6))
+                        arrowprops=dict(arrowstyle='-', color='black', lw=0.8, alpha=0.6),
+                        max_iterations=300)
             
             ax.set_aspect('equal', adjustable='datalim')
             ax.axis('off')
             
-            # --- 圖例放回右上角 ---
-            ax.legend(loc='upper right', bbox_to_anchor=(1.1, 1.05), fontsize=14, markerscale=0.8)
+            # 找回右上角的圖例
+            ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.05), fontsize=14, markerscale=0.8)
             
-            # --- 版面文字繪製 ---
+            # --- 【修復重點3：精準版面文字對齊】 ---
             roc_year = datetime.date.today().year - 1911
             today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             
@@ -374,21 +365,20 @@ if not df_history.empty:
             roc_sun_y = sunday.year - 1911
             week_range = f"{w_start}~{roc_sun_y}/{sunday.month:02d}/{sunday.day:02d}"
             
-            # 左上角：大標題
-            fig.text(0.05, 0.90, f"{today_str}施作進度回報", fontsize=50, fontweight='bold')
+            # 標題與資訊區塊緊密靠攏
+            fig.text(0.05, 0.90, f"{today_str} 施作進度回報", fontsize=50, fontweight='bold')
             
-            # 左側縮排：資訊區塊
             info_lines = [
-                f"本週預計完成-{w_est}支",
+                f"本週預計完成 {w_est} 支",
                 f"{week_range}",
-                f"本日完成-{t_done}支",
+                f"本日完成 {t_done} 支",
                 f"{today_str}",
-                f"累積完成-{c_done}支"
+                f"累積完成 {c_done} 支"
             ]
-            fig.text(0.12, 0.82, "\n".join(info_lines), fontsize=32, linespacing=1.6, va='top')
+            fig.text(0.05, 0.85, "\n".join(info_lines), fontsize=35, linespacing=1.6, va='top')
             
-            # 右上角：區域備註 (置中於右側圖表上方)
-            fig.text(0.70, 0.90, loc_text, fontsize=55, fontweight='bold', ha='center')
+            # 右上角標題
+            fig.text(0.70, 0.95, loc_text, fontsize=55, fontweight='bold', ha='center')
             
             buf = io.BytesIO()
             plt.savefig(buf, format='pdf', bbox_inches='tight')
