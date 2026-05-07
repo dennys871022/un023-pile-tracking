@@ -16,8 +16,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V22", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (版面客製化版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V23", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (動態統計與空心圓點版)")
 
 @st.cache_resource
 def setup_chinese_font():
@@ -89,7 +89,6 @@ def fetch_current_data(sh_main):
         if not records: return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
         df = pd.DataFrame(records)
         df['樁號'] = df['樁號'].astype(str).str.upper().str.strip()
-        if '機台' not in df.columns: df['機台'] = 'A車'
         df['施作順序'] = pd.to_numeric(df.get('施作順序', 0), errors='coerce').fillna(0)
         return df
     except:
@@ -97,6 +96,24 @@ def fetch_current_data(sh_main):
 
 ss, sh_main, sh_chart = get_gs_connection()
 df_history = fetch_current_data(sh_main)
+
+# --- 核心邏輯：動態統計 ---
+total_done_auto = len(df_history)
+today_done_auto = 0
+week_start_str = ""
+if not df_history.empty:
+    df_history['施工日期_DT'] = pd.to_datetime(df_history['施工日期'], errors='coerce')
+    latest_dt = df_history['施工日期_DT'].max()
+    today_done_auto = len(df_history[df_history['施工日期_DT'] == latest_dt])
+    
+    # 計算本週日期區間
+    monday = latest_dt - pd.Timedelta(days=latest_dt.weekday())
+    # 找到本週最早的一筆紀錄
+    this_week_data = df_history[df_history['施工日期_DT'] >= monday]
+    if not this_week_data.empty:
+        earliest_this_week = this_week_data['施工日期_DT'].min()
+        roc_y = earliest_this_week.year - 1911
+        week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
 
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y']].copy()
@@ -147,32 +164,14 @@ def sync_to_chart_sheet():
     except Exception as e:
         st.error(f"同步失敗: {e}")
 
+# --- UI 介面 ---
 st.sidebar.header("📂 備份與同步")
 if st.sidebar.button("🔄 手動同步雲端數據"):
     sync_to_chart_sheet()
 
-up_file = st.sidebar.file_uploader("匯入 Excel/CSV", type=['csv', 'xlsx'])
-if up_file:
-    try:
-        df_up = pd.read_excel(up_file, sheet_name='施工明細') if up_file.name.endswith('.xlsx') else pd.read_csv(up_file)
-        new_rows = []
-        curr_p = df_history['樁號'].tolist()
-        for _, row in df_up.iterrows():
-            p = str(row['樁號']).upper().strip()
-            if p not in curr_p:
-                b = df_base[df_base['樁號'] == p]
-                x, y = (b['X'].iloc[0], b['Y'].iloc[0]) if not b.empty else (0,0)
-                new_rows.append([p, str(row['施工日期']), str(row.get('機台','A車')), int(row.get('施作順序',1)), x, y])
-        if new_rows:
-            sh_main.append_rows(new_rows)
-            st.sidebar.success(f"已同步 {len(new_rows)} 筆")
-            sync_to_chart_sheet()
-            st.rerun()
-    except Exception as e: st.sidebar.error(f"還原失敗: {e}")
-
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
-work_date = str(c1.date_input("日期"))
+work_date = c1.date_input("日期")
 machine = c2.radio("機台", ["A車", "B車"], horizontal=True)
 mode = c3.radio("模式", ["4支一循環", "2支一循環"], horizontal=True)
 step = 4 if "4支" in mode else 2
@@ -188,7 +187,7 @@ def save_data(piles):
             seq += 1
             b = df_base[df_base['樁號'] == p]
             x, y = (b['X'].iloc[0], b['Y'].iloc[0]) if not b.empty else (0, 0)
-            new_d.append([p, work_date, machine, int(seq), float(x), float(y)])
+            new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
     if new_d:
         sh_main.append_rows(new_d)
         sync_to_chart_sheet()
@@ -199,7 +198,7 @@ with t1:
     with st.form("a"):
         cc1, cc2, cc3 = st.columns(3); sp = cc1.number_input("起始 P", 1, 613, 1)
         dr = cc2.radio("方向", ["遞增", "遞減"]); ct = cc3.number_input("數量", 1, 100, 10)
-        if st.form_submit_button("登錄"):
+        if st.form_submit_button("執行登錄"):
             plist = []; cur = sp
             for _ in range(ct):
                 if 1 <= cur <= 613: plist.append(f"P{cur}")
@@ -208,7 +207,7 @@ with t1:
 with t2:
     with st.form("m"):
         raw = st.text_input("區間 (1-50)")
-        if st.form_submit_button("登錄"):
+        if st.form_submit_button("執行登錄"):
             plist = []
             if raw:
                 pts = re.split(r'[,\s]+', re.sub(r'[pP]', '', raw))
@@ -220,40 +219,112 @@ with t2:
             save_data(plist)
 
 st.markdown("---")
-st.subheader("🗺️ 現場施工全區圖 (框選範圍即可局部導出 PDF)")
-
 df_p = process_status_logic(df_history, df_base)
-color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
-colors_seq = px.colors.qualitative.Plotly
 
+# --- 網頁圖表樣式：空心圓點 ---
+color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
-    color_discrete_map=color_map, color_discrete_sequence=colors_seq,
+    color_discrete_map=color_map, color_discrete_sequence=px.colors.qualitative.Plotly,
     custom_data=['樁號']
 )
+# 設定未完成為空心圓
 fig.update_traces(
-    textposition='top center', textfont=dict(size=8),
-    marker=dict(size=10, line=dict(width=1, color='white'))
+    selector=dict(name='未完成'),
+    marker=dict(symbol='circle-open', size=10, line=dict(width=1, color='#696969'))
 )
-fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=950, plot_bgcolor='white', dragmode='pan')
+# 設定已完成與日期為實心圓
+fig.update_traces(
+    selector=lambda t: t.name != '未完成',
+    marker=dict(symbol='circle', size=12, line=dict(width=1, color='white'))
+)
+fig.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white', dragmode='pan')
 
 try:
     selection_event = st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True}, on_select="rerun", selection_mode=('box', 'lasso'))
     selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]] if selection_event and "selection" in selection_event and selection_event["selection"]["points"] else []
-except TypeError:
+except:
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
     selected_piles = []
 
+# --- PDF 報表自訂內容 (自動帶入推算值) ---
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📄 PDF 報表自訂內容")
-    pdf_loc_note = st.sidebar.text_input("圖表右上角位置備註", "滯洪池BC")
-    pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", min_value=0, value=36)
-    pdf_today_done = st.sidebar.number_input("本日完成 (支)", min_value=0, value=7)
-    pdf_cum_done = st.sidebar.number_input("累積完成 (支)", min_value=0, value=11)
+    pdf_loc_note = st.sidebar.text_input("施作位置備註", "滯洪池BC")
+    pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
+    pdf_today_done = st.sidebar.number_input("本日完成 (支) [自動統計]", value=today_done_auto)
+    pdf_cum_done = st.sidebar.number_input("累積完成 (支) [自動統計]", value=total_done_auto)
     
-    st.sidebar.markdown("### 📥 報表與圖面下載")
+    st.sidebar.markdown("### 📥 下載區")
     
+    # PDF 生成函數
+    if MATPLOTLIB_READY:
+        def pdf_gen(p_df, loc_text, w_est, t_done, c_done, w_start):
+            font_name = setup_chinese_font()
+            if font_name: plt.rcParams['font.family'] = font_name
+            
+            fig = plt.figure(figsize=(24, 16))
+            ax = fig.add_axes([0.4, 0.1, 0.55, 0.8]) # 調整比例給左側文字
+            
+            states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+            colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
+            fallback_colors = px.colors.qualitative.Plotly
+            color_idx = 0
+            
+            texts = []
+            for state in states:
+                sub_df = p_df[p_df['狀態'] == state]
+                if sub_df.empty: continue
+                c = colors.get(state, fallback_colors[color_idx % len(fallback_colors)])
+                if state not in colors: color_idx += 1
+                
+                if state == '未完成':
+                    ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=20, facecolors='none', edgecolors=c, lw=0.8, zorder=2)
+                else:
+                    ax.scatter(sub_df['X'], sub_df['Y'], label=state, color=c, s=25, zorder=3)
+                    for _, row in sub_df.iterrows():
+                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=8, ha='center', va='center'))
+
+            ax.margins(0.1)
+            adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+            ax.set_aspect('equal', adjustable='datalim')
+            ax.axis('off')
+            
+            # --- 左側報表文字佈局 ---
+            roc_year = datetime.date.today().year - 1911
+            today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
+            
+            # 計算週日日期
+            latest_dt = pd.to_datetime(df_history['施工日期'], errors='coerce').max()
+            sunday = latest_dt + datetime.timedelta(days=(6 - latest_dt.weekday()))
+            roc_sun_y = sunday.year - 1911
+            week_range = f"{w_start}~{roc_sun_y}/{sunday.month:02d}/{sunday.day:02d}"
+            
+            # 主標題
+            fig.text(0.05, 0.88, f"{today_str} 施作進度回報", fontsize=48, fontweight='bold')
+            # 位置備註 (緊跟在標題下一行)
+            fig.text(0.05, 0.83, loc_text, fontsize=42, fontweight='bold', color='#333333')
+            
+            info_lines = [
+                f"本週預計完成 {w_est} 支",
+                f"{week_range}",
+                f"本日完成 {t_done} 支",
+                f"{today_str}",
+                f"累積完成 {c_done} 支"
+            ]
+            fig.text(0.05, 0.75, "\n\n".join(info_lines), fontsize=38, linespacing=1.2, va='top')
+            
+            buf = io.BytesIO()
+            plt.savefig(buf, format='pdf', bbox_inches='tight')
+            plt.close(fig)
+            return buf.getvalue()
+
+        pdf_target_df = df_p[df_p['樁號'].isin(selected_piles)].copy() if selected_piles else df_p.copy()
+        btn_txt = "🔴 匯出 PDF (局部)" if selected_piles else "🔴 匯出 PDF (全區)"
+        st.sidebar.download_button(btn_txt, pdf_gen(pdf_target_df, pdf_loc_note, pdf_week_est, pdf_today_done, pdf_cum_done, week_start_str), f"Plan_{datetime.date.today()}.pdf", type="primary")
+
+    # Excel 生成 (保持全區)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
@@ -261,103 +332,16 @@ if not df_history.empty:
             wb = wr.book; ws = wb.add_worksheet('全區進度圖'); ch = wb.add_chart({'type': 'scatter'})
             col = 10
             states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
-            colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
-            fallback_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
-            color_idx = 0
             for state in states:
-                sub_df = p_df[p_df['狀態'] == state].reset_index(drop=True)
-                if sub_df.empty: continue
-                sub_df[['X', 'Y', '標籤']].to_excel(wr, sheet_name='全區進度圖', startcol=col, index=False)
-                marker_color = colors.get(state)
-                if not marker_color:
-                    marker_color = fallback_colors[color_idx % len(fallback_colors)]
-                    color_idx += 1
-                series_data = {
-                    'name': state, 'categories': ['全區進度圖', 1, col, len(sub_df), col],
-                    'values': ['全區進度圖', 1, col+1, len(sub_df), col+1],
-                    'marker': {'type': 'circle', 'size': 6, 'fill': {'color': marker_color}, 'border': {'color': marker_color}}
-                }
-                if state != '未完成':
-                    clbls = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(sub_df))]
-                    series_data['data_labels'] = {'custom': clbls, 'position': 'above', 'font': {'size': 8}}
-                ch.add_series(series_data)
+                sub = p_df[p_df['狀態'] == state].reset_index(drop=True)
+                if sub.empty: continue
+                sub[['X', 'Y', '標籤']].to_excel(wr, sheet_name='全區進度圖', startcol=col, index=False)
+                ch.add_series({
+                    'name': state, 'categories': ['全區進度圖', 1, col, len(sub), col],
+                    'values': ['全區進度圖', 1, col+1, len(sub), col+1]
+                })
                 col += 4
-            today_str = datetime.date.today().strftime('%Y-%m-%d')
-            ch.set_title({'name': f'{today_str} 施作進度回報'})
-            ch.set_size({'width': 2400, 'height': 1500})
-            ch.set_x_axis({'visible': False, 'major_gridlines': {'visible': False}})
-            ch.set_y_axis({'visible': False, 'major_gridlines': {'visible': False}})
+            ch.set_x_axis({'visible': False}); ch.set_y_axis({'visible': False})
             ws.insert_chart('B2', ch)
         return out.getvalue()
-    
-    st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx", type="secondary")
-
-    if not MATPLOTLIB_READY:
-        st.sidebar.error("⚠️ 請確保已在 GitHub 加入 matplotlib 與 adjustText")
-    else:
-        if selected_piles:
-            pdf_df = df_p[df_p['樁號'].isin(selected_piles)].copy()
-            pdf_btn_text = "🔴 匯出 PDF (您框選的局部範圍)"
-        else:
-            pdf_df = df_p.copy()
-            pdf_btn_text = "🔴 匯出 PDF (全區圖)"
-
-        def pdf_gen(p_df, loc_text, w_est, t_done, c_done):
-            font_name = setup_chinese_font()
-            if font_name:
-                plt.rcParams['font.family'] = font_name
-            else:
-                plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'PingFang TC']
-            plt.rcParams['axes.unicode_minus'] = False
-            
-            fig = plt.figure(figsize=(24, 16))
-            ax = fig.add_axes([0.45, 0.1, 0.5, 0.8])
-            
-            states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
-            colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
-            fallback_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
-            color_idx = 0
-            
-            texts = []
-            for state in states:
-                sub_df = p_df[p_df['狀態'] == state]
-                if sub_df.empty: continue
-                c = colors.get(state)
-                if not c:
-                    c = fallback_colors[color_idx % len(fallback_colors)]
-                    color_idx += 1
-                ax.scatter(sub_df['X'], sub_df['Y'], label=state, color=c, s=15, zorder=2)
-                if state != '未完成':
-                    for _, row in sub_df.iterrows():
-                        texts.append(ax.text(row['X'], row['Y'], row['標籤'], fontsize=8, ha='center', va='center'))
-
-            ax.margins(0.15)
-            adjust_text(texts, ax=ax, expand_points=(2.5, 2.5), expand_text=(1.5, 1.5), arrowprops=dict(arrowstyle='-', color='gray', lw=0.5, alpha=0.8), max_iterations=300)
-            ax.set_aspect('equal', adjustable='datalim')
-            ax.axis('off')
-            ax.set_title(loc_text, fontsize=45, fontweight='bold', pad=30)
-            
-            roc_year = datetime.date.today().year - 1911
-            today_md = f"{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
-            today_str = f"{roc_year}/{today_md}"
-            
-            monday = datetime.date.today() - datetime.timedelta(days=datetime.date.today().weekday())
-            sunday = monday + datetime.timedelta(days=6)
-            week_str = f"{monday.year-1911}/{monday.month:02d}/{monday.day:02d}~{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
-            
-            fig.text(0.05, 0.85, f"{today_str} 施作進度回報", fontsize=50, fontweight='bold')
-            info_text = (
-                f"本週預計完成 {w_est} 支\n"
-                f"{week_str}\n"
-                f"本日完成 {t_done} 支\n"
-                f"{today_str}\n"
-                f"累積完成 {c_done} 支"
-            )
-            fig.text(0.08, 0.65, info_text, fontsize=35, linespacing=1.8, va='top')
-            
-            pdf_buf = io.BytesIO()
-            plt.savefig(pdf_buf, format='pdf', bbox_inches='tight')
-            plt.close(fig)
-            return pdf_buf.getvalue()
-
-        st.sidebar.download_button(pdf_btn_text, pdf_gen(pdf_df, pdf_loc_note, pdf_week_est, pdf_today_done, pdf_cum_done), f"Plan_{datetime.date.today()}.pdf", type="primary")
+    st.sidebar.download_button("🟢 匯出 Excel (全區)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx")
