@@ -16,8 +16,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V33", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (標籤拆分防重疊版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V34", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (幾何方位完美對齊版)")
 
 # === 字體設定 ===
 @st.cache_resource
@@ -113,13 +113,30 @@ if not df_history.empty:
         roc_y = earliest_this_week.year - 1911
         week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
 
+# === 【核心修正】加入幾何方位判定 ===
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy()
+    
+    # 幾何向量運算：判斷點位連線是水平還是垂直
+    plot_df = plot_df.sort_values('數字').reset_index(drop=True)
+    dx = plot_df['X'].diff().fillna(method='bfill')
+    dy = plot_df['Y'].diff().fillna(method='bfill')
+    dx_fwd = (plot_df['X'].shift(-1) - plot_df['X']).fillna(method='ffill')
+    dy_fwd = (plot_df['Y'].shift(-1) - plot_df['Y']).fillna(method='ffill')
+    
+    # 算出前後向量的平均趨勢
+    dx_avg = dx + dx_fwd
+    dy_avg = dy + dy_fwd
+    
+    # 若 X軸變動大於 Y軸變動 -> 判定為水平線 (True)
+    plot_df['is_horizontal'] = dx_avg.abs() >= dy_avg.abs()
+    
     if df_hist.empty:
         plot_df['狀態'] = '未完成'
         plot_df['標籤'] = plot_df['樁號']
         plot_df['純順序'] = ""
         return plot_df
+        
     hist = df_hist.copy()
     def label_maker(r):
         m = str(r.get('機台', 'A'))[0]
@@ -146,6 +163,83 @@ def process_status_logic(df_hist, df_b):
     return plot_df
 
 df_p = process_status_logic(df_history, df_base)
+
+def sync_to_chart_sheet():
+    ss_now, m_now, c_now = get_gs_connection()
+    if not ss_now or df_history.empty: return
+    try:
+        plot_df = process_status_logic(df_history, df_base)
+        gs_matrix = pd.DataFrame()
+        gs_matrix['X'] = plot_df['X']
+        gs_matrix['標籤'] = plot_df['標籤']
+        gs_matrix['未完成'] = plot_df['Y'].where(plot_df['狀態'] == '未完成', None)
+        gs_matrix['[已完成]'] = plot_df['Y'].where(plot_df['狀態'] == '[已完成]', None)
+        valid_dates = sorted([s for s in plot_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+        for d in valid_dates:
+            gs_matrix[d] = plot_df['Y'].where(plot_df['狀態'] == d, None)
+        gs_matrix = gs_matrix.astype(object).where(pd.notnull(gs_matrix), None)
+        out_data = [gs_matrix.columns.values.tolist()] + gs_matrix.values.tolist()
+        c_now.clear()
+        c_now.update("A1", out_data)
+        st.success("✅ 雲端繪圖數據已同步")
+    except Exception as e:
+        st.error(f"同步失敗: {e}")
+
+# === UI 介面 ===
+st.sidebar.header("📂 備份與同步")
+if st.sidebar.button("🔄 手動同步雲端數據"):
+    sync_to_chart_sheet()
+
+st.markdown("### 📝 進度登錄")
+c1, c2, c3 = st.columns([1, 1, 2])
+work_date = c1.date_input("日期")
+machine = c2.radio("機台", ["A車", "B車"], horizontal=True)
+mode = c3.radio("模式", ["4支一循環", "2支一循環"], horizontal=True)
+step = 4 if "4支" in mode else 2
+
+def save_data(piles):
+    if not piles or sh_main is None: return
+    m_data = df_history[df_history['機台'] == machine]
+    seq = 0 if m_data.empty else pd.to_numeric(m_data['施作順序']).max()
+    new_d = []
+    for p in piles:
+        p = p.upper().strip()
+        if p not in df_history['樁號'].values:
+            seq += 1
+            b = df_base[df_base['樁號'] == p]
+            x, y = (b['X'].iloc[0], b['Y'].iloc[0]) if not b.empty else (0, 0)
+            new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
+    if new_d:
+        sh_main.append_rows(new_d)
+        sync_to_chart_sheet()
+        st.rerun()
+
+t1, t2 = st.tabs(["🎯 推算", "✏️ 手動"])
+with t1:
+    with st.form("a"):
+        cc1, cc2, cc3 = st.columns(3); sp = cc1.number_input("起始 P", 1, 613, 1)
+        dr = cc2.radio("方向", ["遞增", "遞減"]); ct = cc3.number_input("數量", 1, 100, 10)
+        if st.form_submit_button("執行登錄"):
+            plist = []; cur = sp
+            for _ in range(ct):
+                if 1 <= cur <= 613: plist.append(f"P{cur}")
+                cur = cur + step if dr == "遞增" else cur - step
+            save_data(plist)
+with t2:
+    with st.form("m"):
+        raw = st.text_input("區間 (1-50)")
+        if st.form_submit_button("執行登錄"):
+            plist = []
+            if raw:
+                pts = re.split(r'[,\s]+', re.sub(r'[pP]', '', raw))
+                for pt in pts:
+                    if '-' in pt:
+                        s, e = map(int, pt.split('-')); rs = step if s <= e else -step
+                        for n in range(s, e + (1 if s <= e else -1), rs): plist.append(f"P{n}")
+                    elif pt.isdigit(): plist.append(f"P{pt}")
+            save_data(plist)
+
+st.markdown("---")
 
 # === 網頁圖表樣式 (維持不變) ===
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
@@ -212,8 +306,9 @@ if not df_history.empty:
             color_idx = 0
             
             lbl_fontsize = 18 if is_local_mode else 9
+            # 設定統一的留白距離 (單位為點 points)，保證絕對不碰到 s=180 的大圓圈
+            base_off = 18 if is_local_mode else 12 
             
-            texts = []
             for state in states:
                 sub_df = pdf_target_df[pdf_target_df['狀態'] == state]
                 if sub_df.empty: continue
@@ -226,25 +321,28 @@ if not df_history.empty:
                     legend_label = f"{state} 樁號 ○ 施作順序"
                     ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=legend_label)
                     
-                    for _, row in sub_df.iterrows():
-                        # 【重大修正】：將樁號與順序拆開，賦予不同的初始偏移
-                        # 樁號 (例如 P601) 放在座標原位，稍後往左上推
-                        texts.append(ax.text(row['X'], row['Y'], row['樁號'], 
-                                            fontsize=lbl_fontsize, fontweight='bold', color='black', ha='center', va='center'))
-                        # 施作順序 (例如 (A4)) 放在座標原位，稍後往右下推
-                        texts.append(ax.text(row['X'], row['Y'], row['純順序'], 
-                                            fontsize=lbl_fontsize, color=c, ha='center', va='center'))
+                # 【核心邏輯】：直接計算絕對座標系推移，徹底拔除防撞演算法
+                for _, row in sub_df.iterrows():
+                    is_horiz = row['is_horizontal']
+                    p_text = row['樁號']
+                    s_text = row['純順序'] # 未完成時為空字串 ""
+                    
+                    if is_horiz:
+                        # 水平排法：樁號在上，順序在下
+                        ax.annotate(p_text, (row['X'], row['Y']), xytext=(0, base_off), textcoords='offset points',
+                                    fontsize=lbl_fontsize, fontweight='bold', color='black', ha='center', va='bottom', zorder=4)
+                        if s_text:
+                            ax.annotate(s_text, (row['X'], row['Y']), xytext=(0, -base_off), textcoords='offset points',
+                                        fontsize=lbl_fontsize, color=c, ha='center', va='top', zorder=4)
+                    else:
+                        # 垂直排法：樁號在左，順序在右
+                        ax.annotate(p_text, (row['X'], row['Y']), xytext=(-base_off, 0), textcoords='offset points',
+                                    fontsize=lbl_fontsize, fontweight='bold', color='black', ha='right', va='center', zorder=4)
+                        if s_text:
+                            ax.annotate(s_text, (row['X'], row['Y']), xytext=(base_off, 0), textcoords='offset points',
+                                        fontsize=lbl_fontsize, color=c, ha='left', va='center', zorder=4)
 
             ax.margins(0.1)
-            
-            # 【終極防撞參數】：增加 expand 數值，強迫文字散開
-            if texts:
-                adjust_text(texts, ax=ax, 
-                            expand_points=(4.0, 4.0),
-                            expand_text=(2.5, 2.5),
-                            arrowprops=dict(arrowstyle='-', color='gray', lw=1.0, alpha=0.6),
-                            max_iterations=1500)
-            
             ax.set_aspect('equal', adjustable='datalim')
             ax.axis('off')
             ax.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28, markerscale=1.5)
@@ -265,7 +363,7 @@ if not df_history.empty:
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區 (文字與順序已拆分不重疊)")
+        st.subheader("👁️ PDF 最終版面預覽區 (幾何鎖定對齊)")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
