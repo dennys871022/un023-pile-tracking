@@ -11,13 +11,12 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 try:
     import matplotlib.pyplot as plt
-    from adjustText import adjust_text
     MATPLOTLIB_READY = True
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V35", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (幾何方位完美對齊修復版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V36", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (自訂間距防撞版)")
 
 # === 字體設定 ===
 @st.cache_resource
@@ -113,24 +112,20 @@ if not df_history.empty:
         roc_y = earliest_this_week.year - 1911
         week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
 
-# === 【核心修正】加入幾何方位判定 (已修復 pandas 語法錯誤) ===
+# === 【幾何方位判定與合併】 ===
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy()
     
-    # 幾何向量運算：判斷點位連線是水平還是垂直
     plot_df = plot_df.sort_values('數字').reset_index(drop=True)
     
-    # 使用新版 pandas 支援的 .bfill() 與 .ffill() 取代舊版的 fillna(method=...)
+    # 支援 Streamlit 雲端最新版 pandas 語法
     dx = plot_df['X'].diff().bfill()
     dy = plot_df['Y'].diff().bfill()
     dx_fwd = (plot_df['X'].shift(-1) - plot_df['X']).ffill()
     dy_fwd = (plot_df['Y'].shift(-1) - plot_df['Y']).ffill()
     
-    # 算出前後向量的平均趨勢
     dx_avg = dx + dx_fwd
     dy_avg = dy + dy_fwd
-    
-    # 若 X軸變動大於 Y軸變動 -> 判定為水平線 (True)
     plot_df['is_horizontal'] = dx_avg.abs() >= dy_avg.abs()
     
     if df_hist.empty:
@@ -243,7 +238,7 @@ with t2:
 
 st.markdown("---")
 
-# === 網頁圖表樣式 (維持不變) ===
+# === 網頁圖表樣式 ===
 color_map = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig_web = px.scatter(
     df_p, x='X', y='Y', text='標籤', color='狀態',
@@ -262,7 +257,7 @@ fig_web.update_traces(
 )
 fig_web.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white', dragmode='pan')
 
-st.subheader("🗺️ 網頁選取區 (框選範圍即可生成PDF)")
+st.subheader("🗺️ 網頁選取區 (框選範圍即可生成局部 PDF)")
 try:
     selection_event = st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True}, on_select="rerun", selection_mode=('box', 'lasso'))
     selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]] if selection_event and "selection" in selection_event and selection_event["selection"]["points"] else []
@@ -279,7 +274,17 @@ if not df_history.empty:
     pdf_today_done = st.sidebar.number_input("本日完成 (支)", value=today_done_auto)
     pdf_cum_done = st.sidebar.number_input("累積完成 (支)", value=total_done_auto)
     
-    st.sidebar.markdown("### 📐 PDF 版面位置微調")
+    # 【全新加入：幾何比例與間距控制區】
+    st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調 (解決重疊)")
+    with st.sidebar.form("geom_controls"):
+        st.caption("若點位太密集，可調大「畫布放大倍率」將點位拉開；或縮小圓圈與文字。")
+        fig_scale = st.slider("畫布排樁間距拉開倍率", 1.0, 5.0, 1.5, 0.1)
+        marker_size = st.slider("圓圈大小", 50, 400, 180, 10)
+        lbl_fontsize = st.slider("樁號文字大小", 8, 40, 18, 1)
+        text_offset = st.slider("文字離圓圈距離", 5, 60, 20, 1)
+        st.form_submit_button("🔄 套用幾何設定")
+
+    st.sidebar.markdown("### 📐 PDF 大標題位置微調")
     with st.sidebar.form("layout_controls"):
         pos_title_y = st.slider("大標題 高度 (Y)", 0.0, 1.0, 0.90, 0.01)
         pos_info_x = st.slider("統計資訊 左右 (X)", 0.0, 1.0, 0.05, 0.01)
@@ -288,7 +293,7 @@ if not df_history.empty:
         pos_loc_y = st.slider("右上角標題 高度 (Y)", 0.0, 1.0, 0.95, 0.01)
         pos_leg_x = st.slider("圖例 左右 (X)", 0.0, 1.5, 1.15, 0.01)
         pos_leg_y = st.slider("圖例 高度 (Y)", 0.0, 1.5, 1.05, 0.01)
-        st.form_submit_button("🔄 套用排版並更新預覽圖")
+        st.form_submit_button("🔄 套用文字位置")
 
     if MATPLOTLIB_READY:
         is_local_mode = bool(selected_piles)
@@ -299,17 +304,14 @@ if not df_history.empty:
             if font_name: plt.rcParams['font.family'] = font_name
             plt.rcParams['axes.unicode_minus'] = False
             
-            fig = plt.figure(figsize=(24, 16))
+            # 【關鍵】將 figsize 乘上使用者設定的放大倍率，物理拉開所有點位間距
+            fig = plt.figure(figsize=(24 * fig_scale, 16 * fig_scale))
             ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
             
             states = ['未完成', '[已完成]'] + sorted([s for s in pdf_target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
             colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}
             fallback_colors = px.colors.qualitative.Plotly
             color_idx = 0
-            
-            lbl_fontsize = 18 if is_local_mode else 9
-            # 設定統一的留白距離 (單位為點 points)，保證絕對不碰到 s=180 的大圓圈
-            base_off = 18 if is_local_mode else 12 
             
             for state in states:
                 sub_df = pdf_target_df[pdf_target_df['狀態'] == state]
@@ -318,36 +320,40 @@ if not df_history.empty:
                 if state not in colors: color_idx += 1
                 
                 if state == '未完成':
-                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=180, lw=1.5, zorder=2, label="未完成")
+                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=marker_size, lw=1.5, zorder=2, label="未完成")
+                    # 未完成的點位，完全略過文字繪製，畫面保持乾淨
+                    continue
                 else:
                     legend_label = f"{state} 樁號 ○ 施作順序"
-                    ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=legend_label)
+                    ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=marker_size, zorder=3, label=legend_label)
                     
-                # 【核心邏輯】：絕對座標系推移，根據幾何判定放置文字位置
-                for _, row in sub_df.iterrows():
-                    is_horiz = row['is_horizontal']
-                    p_text = row['樁號']
-                    s_text = row['純順序']
-                    
-                    if is_horiz:
-                        # 水平排法：樁號在上，順序在下
-                        ax.annotate(p_text, (row['X'], row['Y']), xytext=(0, base_off), textcoords='offset points',
-                                    fontsize=lbl_fontsize, fontweight='bold', color='black', ha='center', va='bottom', zorder=4)
-                        if s_text:
-                            ax.annotate(s_text, (row['X'], row['Y']), xytext=(0, -base_off), textcoords='offset points',
-                                        fontsize=lbl_fontsize, color=c, ha='center', va='top', zorder=4)
-                    else:
-                        # 垂直排法：樁號在左，順序在右
-                        ax.annotate(p_text, (row['X'], row['Y']), xytext=(-base_off, 0), textcoords='offset points',
-                                    fontsize=lbl_fontsize, fontweight='bold', color='black', ha='right', va='center', zorder=4)
-                        if s_text:
-                            ax.annotate(s_text, (row['X'], row['Y']), xytext=(base_off, 0), textcoords='offset points',
-                                        fontsize=lbl_fontsize, color=c, ha='left', va='center', zorder=4)
+                    # 使用絕對座標系推移，根據幾何判定放置文字位置
+                    for _, row in sub_df.iterrows():
+                        is_horiz = row['is_horizontal']
+                        p_text = row['樁號']
+                        s_text = row['純順序']
+                        
+                        if is_horiz:
+                            # 水平排法：樁號在上，順序在下
+                            ax.annotate(p_text, (row['X'], row['Y']), xytext=(0, text_offset), textcoords='offset points',
+                                        fontsize=lbl_fontsize, fontweight='bold', color='black', ha='center', va='bottom', zorder=4)
+                            if s_text:
+                                ax.annotate(s_text, (row['X'], row['Y']), xytext=(0, -text_offset), textcoords='offset points',
+                                            fontsize=lbl_fontsize, color=c, ha='center', va='top', zorder=4)
+                        else:
+                            # 垂直排法：樁號在左，順序在右
+                            ax.annotate(p_text, (row['X'], row['Y']), xytext=(-text_offset, 0), textcoords='offset points',
+                                        fontsize=lbl_fontsize, fontweight='bold', color='black', ha='right', va='center', zorder=4)
+                            if s_text:
+                                ax.annotate(s_text, (row['X'], row['Y']), xytext=(text_offset, 0), textcoords='offset points',
+                                            fontsize=lbl_fontsize, color=c, ha='left', va='center', zorder=4)
 
             ax.margins(0.1)
             ax.set_aspect('equal', adjustable='datalim')
             ax.axis('off')
-            ax.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28, markerscale=1.5)
+            
+            # 【關鍵】UI 文字大小與畫布同步放大，確保看起來比例依然協調
+            ax.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
             
             roc_year = datetime.date.today().year - 1911
             today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
@@ -357,15 +363,15 @@ if not df_history.empty:
             roc_sun_y = sunday.year - 1911
             week_range = f"{week_start_str}~{roc_sun_y}/{sunday.month:02d}/{sunday.day:02d}"
             
-            fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50, fontweight='bold')
+            fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
             info_lines = [f"本週預計完成 {pdf_week_est} 支", f"{week_range}", f"本日完成 {pdf_today_done} 支", f"{today_str}", f"累積完成 {pdf_cum_done} 支"]
-            fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35, linespacing=1.6, va='top')
-            fig.text(pos_loc_x, pos_loc_y, pdf_loc_note, fontsize=55, fontweight='bold', ha='center')
+            fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35 * fig_scale, linespacing=1.6, va='top')
+            fig.text(pos_loc_x, pos_loc_y, pdf_loc_note, fontsize=55 * fig_scale, fontweight='bold', ha='center')
             return fig
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區 (幾何鎖定對齊)")
+        st.subheader("👁️ PDF 最終版面預覽區 (請嘗試拉大「排樁間距拉開倍率」)")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
@@ -373,6 +379,7 @@ if not df_history.empty:
         plt.close(pdf_fig)
         pdf_bytes = buf.getvalue()
         
+        st.sidebar.markdown("### 📥 下載區")
         pdf_btn_text = "🔴 匯出 PDF (局部範圍)" if is_local_mode else "🔴 匯出 PDF (全區圖)"
         st.sidebar.download_button(pdf_btn_text, pdf_bytes, f"Plan_{datetime.date.today()}.pdf", type="primary")
 
