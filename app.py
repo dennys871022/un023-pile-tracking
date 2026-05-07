@@ -15,10 +15,15 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V37", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (本日重點標註版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V38", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雙機局部視角版)")
 
-# === 字體設定 ===
+# 初始化 Session State 儲存兩組選取區
+if 'sel_a' not in st.session_state:
+    st.session_state.sel_a = []
+if 'sel_b' not in st.session_state:
+    st.session_state.sel_b = []
+
 @st.cache_resource
 def setup_chinese_font():
     import os
@@ -36,7 +41,6 @@ def setup_chinese_font():
         return fm.FontProperties(fname=font_path).get_name()
     return None
 
-# === 資料庫邏輯 ===
 @st.cache_data
 def load_base_data():
     try:
@@ -88,11 +92,10 @@ def fetch_current_data(sh_main):
 ss, sh_main = get_gs_connection()
 df_history = fetch_current_data(sh_main)
 
-# === 動態統計邏輯 ===
 total_done_auto = len(df_history)
 today_done_auto = 0
 week_start_str = ""
-today_state_key = "" # 用來標記本日進度在圖表中的 Key (格式: 05/07)
+today_state_key = ""
 
 if not df_history.empty:
     df_history['施工日期_DT'] = pd.to_datetime(df_history['施工日期'], errors='coerce')
@@ -107,7 +110,6 @@ if not df_history.empty:
         roc_y = earliest_this_week.year - 1911
         week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
 
-# === 幾何方位判定 ===
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy()
     plot_df = plot_df.sort_values('數字').reset_index(drop=True)
@@ -141,7 +143,6 @@ def process_status_logic(df_hist, df_b):
 
 df_p = process_status_logic(df_history, df_base)
 
-# === UI 介面 ===
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = c1.date_input("日期")
@@ -191,14 +192,13 @@ with t2:
             save_data(plist)
 
 st.markdown("---")
-# === 網頁預覽 (維持原樣) ===
 color_map_web = {'未完成': '#696969', '[已完成]': '#FFB6C1'}
 fig_web = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map=color_map_web, custom_data=['樁號'])
 fig_web.update_traces(selector=dict(name='未完成'), marker=dict(symbol='circle-open', size=16, line=dict(width=2, color='#A9A9A9')), textposition='top right')
 fig_web.update_traces(selector=lambda t: t.name != '未完成', marker=dict(symbol='circle', size=16, line=dict(width=1, color='white')), textposition='top right')
 fig_web.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white', dragmode='pan')
 
-st.subheader("🗺️ 網頁選取區 (框選範圍即可生成局部 PDF)")
+st.subheader("🗺️ 網頁選取區 (框選後可指定為左下角局部圖)")
 try:
     selection_event = st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True}, on_select="rerun", selection_mode=('box', 'lasso'))
     selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]] if selection_event and "selection" in selection_event and selection_event["selection"]["points"] else []
@@ -206,7 +206,23 @@ except:
     st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True})
     selected_piles = []
 
-# === PDF 報表自訂內容 ===
+col_btn1, col_btn2, col_btn3 = st.columns(3)
+with col_btn1:
+    if st.button("📌 設定為左下圖 (A機範圍)"):
+        st.session_state.sel_a = selected_piles
+        st.rerun()
+with col_btn2:
+    if st.button("📌 設定為左下圖 (B機範圍)"):
+        st.session_state.sel_b = selected_piles
+        st.rerun()
+with col_btn3:
+    if st.button("🗑️ 清除所有局部圖"):
+        st.session_state.sel_a = []
+        st.session_state.sel_b = []
+        st.rerun()
+
+st.info(f"當前暫存狀態：A機 {len(st.session_state.sel_a)} 支樁 | B機 {len(st.session_state.sel_b)} 支樁")
+
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
@@ -235,35 +251,28 @@ if not df_history.empty:
         st.form_submit_button("🔄 套用文字位置")
 
     if MATPLOTLIB_READY:
-        is_local_mode = bool(selected_piles)
-        pdf_target_df = df_p[df_p['樁號'].isin(selected_piles)].copy() if is_local_mode else df_p.copy()
-        
-        def create_pdf_figure():
-            font_name = setup_chinese_font()
-            if font_name: plt.rcParams['font.family'] = font_name
-            plt.rcParams['axes.unicode_minus'] = False
-            
-            fig = plt.figure(figsize=(24 * fig_scale, 16 * fig_scale))
-            ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
-            
-            states = ['未完成', '[已完成]'] + sorted([s for s in pdf_target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+        def draw_pdf_axis(ax, target_df, scale_factor=1.0, is_main=False):
+            states = ['未完成', '[已完成]'] + sorted([s for s in target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
             colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}
             fallback_colors = px.colors.qualitative.Plotly
             color_idx = 0
             
+            msize = marker_size * scale_factor
+            fsize = lbl_fontsize * scale_factor
+            offset = text_offset * scale_factor
+            
             for state in states:
-                sub_df = pdf_target_df[pdf_target_df['狀態'] == state]
+                sub_df = target_df[target_df['狀態'] == state]
                 if sub_df.empty: continue
                 c = colors.get(state, fallback_colors[color_idx % len(fallback_colors)])
                 if state not in colors: color_idx += 1
                 
                 if state == '未完成':
-                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=marker_size, lw=1.5, zorder=2, label="未完成")
+                    ax.scatter(sub_df['X'], sub_df['Y'], facecolors='none', edgecolors=c, s=msize, lw=1.5, zorder=2)
                 else:
-                    legend_label = f"{state} 樁號 ○ 施作順序"
-                    ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=marker_size, zorder=3, label=legend_label)
+                    legend_label = f"{state} 樁號 ○ 施作順序" if is_main else ""
+                    ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=msize, zorder=3, label=legend_label if legend_label else None)
                     
-                    # 【核心邏輯更新】：僅針對「本日進度 (today_state_key)」顯示文字
                     if state == today_state_key:
                         for _, row in sub_df.iterrows():
                             is_horiz = row['is_horizontal']
@@ -271,16 +280,38 @@ if not df_history.empty:
                             s_text = row['純順序']
                             
                             if is_horiz:
-                                ax.annotate(p_text, (row['X'], row['Y']), xytext=(0, text_offset), textcoords='offset points', fontsize=lbl_fontsize, fontweight='bold', color='black', ha='center', va='bottom', zorder=4)
+                                ax.annotate(p_text, (row['X'], row['Y']), xytext=(0, offset), textcoords='offset points', fontsize=fsize, fontweight='bold', color='black', ha='center', va='bottom', zorder=4)
                                 if s_text:
-                                    ax.annotate(s_text, (row['X'], row['Y']), xytext=(0, -text_offset), textcoords='offset points', fontsize=lbl_fontsize, color=c, ha='center', va='top', zorder=4)
+                                    ax.annotate(s_text, (row['X'], row['Y']), xytext=(0, -offset), textcoords='offset points', fontsize=fsize, color=c, ha='center', va='top', zorder=4)
                             else:
-                                ax.annotate(p_text, (row['X'], row['Y']), xytext=(-text_offset, 0), textcoords='offset points', fontsize=lbl_fontsize, fontweight='bold', color='black', ha='right', va='center', zorder=4)
+                                ax.annotate(p_text, (row['X'], row['Y']), xytext=(-offset, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', color='black', ha='right', va='center', zorder=4)
                                 if s_text:
-                                    ax.annotate(s_text, (row['X'], row['Y']), xytext=(text_offset, 0), textcoords='offset points', fontsize=lbl_fontsize, color=c, ha='left', va='center', zorder=4)
+                                    ax.annotate(s_text, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fsize, color=c, ha='left', va='center', zorder=4)
 
-            ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
-            ax.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
+            ax.margins(0.1)
+            ax.set_aspect('equal', adjustable='datalim')
+            ax.axis('off')
+
+        def create_pdf_figure():
+            font_name = setup_chinese_font()
+            if font_name: plt.rcParams['font.family'] = font_name
+            plt.rcParams['axes.unicode_minus'] = False
+            
+            fig = plt.figure(figsize=(24 * fig_scale, 16 * fig_scale))
+            
+            ax_main = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
+            draw_pdf_axis(ax_main, df_p, scale_factor=1.0, is_main=True)
+            ax_main.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
+            
+            if st.session_state.sel_a:
+                ax_a = fig.add_axes([0.02, 0.05, 0.20, 0.45])
+                draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], scale_factor=0.8)
+                ax_a.set_title("A機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
+                
+            if st.session_state.sel_b:
+                ax_b = fig.add_axes([0.24, 0.05, 0.20, 0.45])
+                draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], scale_factor=0.8)
+                ax_b.set_title("B機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
             
             roc_year = datetime.date.today().year - 1911
             today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
@@ -297,8 +328,7 @@ if not df_history.empty:
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區 (僅標註本日進度)")
-        st.info("💡 預覽圖顯示：本日進度標註文字，先前進度僅保留實心圓圈顏色。若轉角處仍顯擠，請拉大「排樁間距拉開倍率」。")
+        st.subheader("👁️ PDF 最終版面預覽區 (包含左下局部圖與右側全圖)")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
@@ -307,10 +337,8 @@ if not df_history.empty:
         pdf_bytes = buf.getvalue()
         
         st.sidebar.markdown("### 📥 下載區")
-        pdf_btn_text = "🔴 匯出 PDF (局部範圍)" if is_local_mode else "🔴 匯出 PDF (全區圖)"
-        st.sidebar.download_button(pdf_btn_text, pdf_bytes, f"Plan_{datetime.date.today()}.pdf", type="primary")
+        st.sidebar.download_button("🔴 匯出 PDF 報表", pdf_bytes, f"Plan_{datetime.date.today()}.pdf", type="primary")
 
-    # Excel 生成 (保持穩定)
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
