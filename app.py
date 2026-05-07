@@ -16,7 +16,7 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V27", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V28", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (穩定修復版)")
 
 @st.cache_resource
@@ -280,8 +280,9 @@ if not df_history.empty:
                     'marker': {'type': 'circle', 'size': 6, 'fill': {'color': marker_color}, 'border': {'color': marker_color}}
                 }
                 
+                # 這裡修正了崩潰的 Bug：xlsxwriter 官方表示透明必須使用 {'none': True} 
                 if state == '未完成':
-                    series_data['marker'] = {'type': 'circle', 'size': 6, 'fill': {'color': 'none'}, 'border': {'color': marker_color}}
+                    series_data['marker'] = {'type': 'circle', 'size': 6, 'fill': {'none': True}, 'border': {'color': marker_color}}
                 
                 if state != '未完成':
                     clbls = [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(sub_df))]
