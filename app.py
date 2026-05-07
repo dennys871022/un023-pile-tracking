@@ -16,8 +16,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V34", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (幾何方位完美對齊版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V35", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (幾何方位完美對齊修復版)")
 
 # === 字體設定 ===
 @st.cache_resource
@@ -113,16 +113,18 @@ if not df_history.empty:
         roc_y = earliest_this_week.year - 1911
         week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
 
-# === 【核心修正】加入幾何方位判定 ===
+# === 【核心修正】加入幾何方位判定 (已修復 pandas 語法錯誤) ===
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy()
     
     # 幾何向量運算：判斷點位連線是水平還是垂直
     plot_df = plot_df.sort_values('數字').reset_index(drop=True)
-    dx = plot_df['X'].diff().fillna(method='bfill')
-    dy = plot_df['Y'].diff().fillna(method='bfill')
-    dx_fwd = (plot_df['X'].shift(-1) - plot_df['X']).fillna(method='ffill')
-    dy_fwd = (plot_df['Y'].shift(-1) - plot_df['Y']).fillna(method='ffill')
+    
+    # 使用新版 pandas 支援的 .bfill() 與 .ffill() 取代舊版的 fillna(method=...)
+    dx = plot_df['X'].diff().bfill()
+    dy = plot_df['Y'].diff().bfill()
+    dx_fwd = (plot_df['X'].shift(-1) - plot_df['X']).ffill()
+    dy_fwd = (plot_df['Y'].shift(-1) - plot_df['Y']).ffill()
     
     # 算出前後向量的平均趨勢
     dx_avg = dx + dx_fwd
@@ -321,11 +323,11 @@ if not df_history.empty:
                     legend_label = f"{state} 樁號 ○ 施作順序"
                     ax.scatter(sub_df['X'], sub_df['Y'], color=c, s=180, zorder=3, label=legend_label)
                     
-                # 【核心邏輯】：直接計算絕對座標系推移，徹底拔除防撞演算法
+                # 【核心邏輯】：絕對座標系推移，根據幾何判定放置文字位置
                 for _, row in sub_df.iterrows():
                     is_horiz = row['is_horizontal']
                     p_text = row['樁號']
-                    s_text = row['純順序'] # 未完成時為空字串 ""
+                    s_text = row['純順序']
                     
                     if is_horiz:
                         # 水平排法：樁號在上，順序在下
