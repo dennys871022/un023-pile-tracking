@@ -15,10 +15,9 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V39", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (雙機穩定版 + 雙標題左下圖例)")
+st.set_page_config(page_title="UN023 排樁進度系統 V41", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (專注局部視角版)")
 
-# 初始化 Session State 儲存兩組選取區
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
 if 'sel_b' not in st.session_state:
@@ -198,7 +197,7 @@ fig_web.update_traces(selector=dict(name='未完成'), marker=dict(symbol='circl
 fig_web.update_traces(selector=lambda t: t.name != '未完成', marker=dict(symbol='circle', size=16, line=dict(width=1, color='white')), textposition='top right')
 fig_web.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white', dragmode='pan')
 
-st.subheader("🗺️ 網頁選取區 (框選後可指定為左下角局部圖)")
+st.subheader("🗺️ 網頁選取區 (框選後可指定為局部圖)")
 try:
     selection_event = st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True}, on_select="rerun", selection_mode=('box', 'lasso'))
     selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]] if selection_event and "selection" in selection_event and selection_event["selection"]["points"] else []
@@ -208,11 +207,11 @@ except:
 
 col_btn1, col_btn2, col_btn3 = st.columns(3)
 with col_btn1:
-    if st.button("📌 設定為左下圖 (A機範圍)"):
+    if st.button("📌 設定為 A機範圍"):
         st.session_state.sel_a = selected_piles
         st.rerun()
 with col_btn2:
-    if st.button("📌 設定為左下圖 (B機範圍)"):
+    if st.button("📌 設定為 B機範圍"):
         st.session_state.sel_b = selected_piles
         st.rerun()
 with col_btn3:
@@ -226,7 +225,9 @@ st.info(f"當前暫存狀態：A機 {len(st.session_state.sel_a)} 支樁 | B機 
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
-    pdf_loc_note = st.sidebar.text_input("右上角位置標題", "滯洪池BC")
+    pdf_loc_note_right = st.sidebar.text_input("右側主標題", "滯洪池BC")
+    pdf_loc_note_left = st.sidebar.text_input("左側副標題", "左側作業區")
+    
     pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
     pdf_today_done = st.sidebar.number_input("本日完成 (支) [自動統計]", value=today_done_auto)
     pdf_cum_done = st.sidebar.number_input("累積完成 (支) [自動統計]", value=total_done_auto)
@@ -248,14 +249,12 @@ if not df_history.empty:
         pos_loc_y = st.slider("右側位置標題 (Y)", 0.0, 1.0, 0.95, 0.01)
         pos_loc_x_left = st.slider("左側位置標題 (X)", 0.0, 1.0, 0.22, 0.01)
         pos_loc_y_left = st.slider("左側位置標題 (Y)", 0.0, 1.0, 0.55, 0.01)
-        # 圖例預設值改為 0.0 (貼近左下角)
         pos_leg_x = st.slider("圖例 左右 (X)", -1.0, 1.5, 0.00, 0.01)
         pos_leg_y = st.slider("圖例 高度 (Y)", -1.0, 1.5, 0.00, 0.01)
         st.form_submit_button("🔄 套用文字位置")
 
     if MATPLOTLIB_READY:
         def draw_pdf_axis(ax, target_df, scale_factor=1.0, is_main=False):
-            # 【絕對防撞防錯機制】：如果資料是空的，關閉坐標軸並直接返回，絕對不閃退
             if target_df.empty:
                 ax.axis('off')
                 return
@@ -307,24 +306,35 @@ if not df_history.empty:
             
             fig = plt.figure(figsize=(24 * fig_scale, 16 * fig_scale))
             
-            ax_main = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
-            draw_pdf_axis(ax_main, df_p, scale_factor=1.0, is_main=True)
+            has_local_a = bool(st.session_state.sel_a)
+            has_local_b = bool(st.session_state.sel_b)
+            has_any_local = has_local_a or has_local_b
             
-            # 將圖例錨點改為 'lower left' (左下角)，完美配合座標 0.0, 0.0
-            ax_main.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
-            
-            if st.session_state.sel_a:
-                ax_a = fig.add_axes([0.02, 0.05, 0.20, 0.45])
-                draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], scale_factor=0.8)
-                if not df_p[df_p['樁號'].isin(st.session_state.sel_a)].empty:
-                    ax_a.set_title("A機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
-                
-            if st.session_state.sel_b:
-                ax_b = fig.add_axes([0.24, 0.05, 0.20, 0.45])
-                draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], scale_factor=0.8)
-                if not df_p[df_p['樁號'].isin(st.session_state.sel_b)].empty:
-                    ax_b.set_title("B機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
-            
+            if not has_any_local:
+                ax_main = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
+                draw_pdf_axis(ax_main, df_p, scale_factor=1.0, is_main=True)
+                ax_main.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
+            else:
+                if has_local_a and has_local_b:
+                    ax_a = fig.add_axes([0.35, 0.1, 0.30, 0.75])
+                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], scale_factor=1.0, is_main=True)
+                    ax_a.set_title("A機作業區", fontsize=40 * fig_scale, fontweight='bold', y=-0.05)
+                    ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
+                    
+                    ax_b = fig.add_axes([0.68, 0.1, 0.30, 0.75])
+                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], scale_factor=1.0, is_main=False)
+                    ax_b.set_title("B機作業區", fontsize=40 * fig_scale, fontweight='bold', y=-0.05)
+                elif has_local_a:
+                    ax_a = fig.add_axes([0.45, 0.1, 0.5, 0.75])
+                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], scale_factor=1.0, is_main=True)
+                    ax_a.set_title("A機作業區", fontsize=40 * fig_scale, fontweight='bold', y=-0.05)
+                    ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
+                elif has_local_b:
+                    ax_b = fig.add_axes([0.45, 0.1, 0.5, 0.75])
+                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], scale_factor=1.0, is_main=True)
+                    ax_b.set_title("B機作業區", fontsize=40 * fig_scale, fontweight='bold', y=-0.05)
+                    ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
+
             roc_year = datetime.date.today().year - 1911
             today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             latest_dt = pd.to_datetime(df_history['施工日期'], errors='coerce').max()
@@ -332,20 +342,18 @@ if not df_history.empty:
             sunday = latest_dt + datetime.timedelta(days=(6 - latest_dt.weekday()))
             week_range = f"{week_start_str}~{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
             
-            # 左上角總資訊
             fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
             info_lines = [f"本週預計完成 {pdf_week_est} 支", f"{week_range}", f"本日完成 {pdf_today_done} 支", f"{today_str}", f"累積完成 {pdf_cum_done} 支"]
             fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35 * fig_scale, linespacing=1.6, va='top')
             
-            # 【重要更新】：左右兩側各印製一次「位置標題」
-            fig.text(pos_loc_x, pos_loc_y, pdf_loc_note, fontsize=55 * fig_scale, fontweight='bold', ha='center')
-            fig.text(pos_loc_x_left, pos_loc_y_left, pdf_loc_note, fontsize=55 * fig_scale, fontweight='bold', ha='center')
+            fig.text(pos_loc_x, pos_loc_y, pdf_loc_note_right, fontsize=55 * fig_scale, fontweight='bold', ha='center')
+            fig.text(pos_loc_x_left, pos_loc_y_left, pdf_loc_note_left, fontsize=55 * fig_scale, fontweight='bold', ha='center')
             
             return fig
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區 (包含左下局部圖、左右雙標題)")
+        st.subheader("👁️ PDF 最終版面預覽區")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
@@ -354,7 +362,9 @@ if not df_history.empty:
         pdf_bytes = buf.getvalue()
         
         st.sidebar.markdown("### 📥 下載區")
-        st.sidebar.download_button("🔴 匯出 PDF 報表", pdf_bytes, f"Plan_{datetime.date.today()}.pdf", type="primary")
+        has_local_download = bool(st.session_state.sel_a) or bool(st.session_state.sel_b)
+        pdf_btn_text = "🔴 匯出 PDF 報表 (局部圖)" if has_local_download else "🔴 匯出 PDF 報表 (全區圖)"
+        st.sidebar.download_button(pdf_btn_text, pdf_bytes, f"Plan_{datetime.date.today()}.pdf", type="primary")
 
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
