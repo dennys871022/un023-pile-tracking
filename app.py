@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V38", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (雙機局部視角版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V39", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雙機穩定版 + 雙標題左下圖例)")
 
 # 初始化 Session State 儲存兩組選取區
 if 'sel_a' not in st.session_state:
@@ -241,17 +241,25 @@ if not df_history.empty:
 
     st.sidebar.markdown("### 📐 PDF 文字位置微調")
     with st.sidebar.form("layout_controls"):
-        pos_title_y = st.slider("大標題 高度 (Y)", 0.0, 1.0, 0.90, 0.01)
+        pos_title_y = st.slider("左上大標題 高度 (Y)", 0.0, 1.0, 0.90, 0.01)
         pos_info_x = st.slider("統計資訊 左右 (X)", 0.0, 1.0, 0.05, 0.01)
         pos_info_y = st.slider("統計資訊 高度 (Y)", 0.0, 1.0, 0.85, 0.01)
-        pos_loc_x = st.slider("右上角標題 左右 (X)", 0.0, 1.0, 0.70, 0.01)
-        pos_loc_y = st.slider("右上角標題 高度 (Y)", 0.0, 1.0, 0.95, 0.01)
-        pos_leg_x = st.slider("圖例 左右 (X)", 0.0, 1.5, 1.15, 0.01)
-        pos_leg_y = st.slider("圖例 高度 (Y)", 0.0, 1.5, 1.05, 0.01)
+        pos_loc_x = st.slider("右側位置標題 (X)", 0.0, 1.0, 0.70, 0.01)
+        pos_loc_y = st.slider("右側位置標題 (Y)", 0.0, 1.0, 0.95, 0.01)
+        pos_loc_x_left = st.slider("左側位置標題 (X)", 0.0, 1.0, 0.22, 0.01)
+        pos_loc_y_left = st.slider("左側位置標題 (Y)", 0.0, 1.0, 0.55, 0.01)
+        # 圖例預設值改為 0.0 (貼近左下角)
+        pos_leg_x = st.slider("圖例 左右 (X)", -1.0, 1.5, 0.00, 0.01)
+        pos_leg_y = st.slider("圖例 高度 (Y)", -1.0, 1.5, 0.00, 0.01)
         st.form_submit_button("🔄 套用文字位置")
 
     if MATPLOTLIB_READY:
         def draw_pdf_axis(ax, target_df, scale_factor=1.0, is_main=False):
+            # 【絕對防撞防錯機制】：如果資料是空的，關閉坐標軸並直接返回，絕對不閃退
+            if target_df.empty:
+                ax.axis('off')
+                return
+                
             states = ['未完成', '[已完成]'] + sorted([s for s in target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
             colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}
             fallback_colors = px.colors.qualitative.Plotly
@@ -301,17 +309,21 @@ if not df_history.empty:
             
             ax_main = fig.add_axes([0.45, 0.1, 0.5, 0.75]) 
             draw_pdf_axis(ax_main, df_p, scale_factor=1.0, is_main=True)
-            ax_main.legend(loc='upper right', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
+            
+            # 將圖例錨點改為 'lower left' (左下角)，完美配合座標 0.0, 0.0
+            ax_main.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
             
             if st.session_state.sel_a:
                 ax_a = fig.add_axes([0.02, 0.05, 0.20, 0.45])
                 draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], scale_factor=0.8)
-                ax_a.set_title("A機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
+                if not df_p[df_p['樁號'].isin(st.session_state.sel_a)].empty:
+                    ax_a.set_title("A機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
                 
             if st.session_state.sel_b:
                 ax_b = fig.add_axes([0.24, 0.05, 0.20, 0.45])
                 draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], scale_factor=0.8)
-                ax_b.set_title("B機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
+                if not df_p[df_p['樁號'].isin(st.session_state.sel_b)].empty:
+                    ax_b.set_title("B機作業區", fontsize=30 * fig_scale, fontweight='bold', y=-0.1)
             
             roc_year = datetime.date.today().year - 1911
             today_str = f"{roc_year}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
@@ -320,15 +332,20 @@ if not df_history.empty:
             sunday = latest_dt + datetime.timedelta(days=(6 - latest_dt.weekday()))
             week_range = f"{week_start_str}~{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
             
+            # 左上角總資訊
             fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
             info_lines = [f"本週預計完成 {pdf_week_est} 支", f"{week_range}", f"本日完成 {pdf_today_done} 支", f"{today_str}", f"累積完成 {pdf_cum_done} 支"]
             fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35 * fig_scale, linespacing=1.6, va='top')
+            
+            # 【重要更新】：左右兩側各印製一次「位置標題」
             fig.text(pos_loc_x, pos_loc_y, pdf_loc_note, fontsize=55 * fig_scale, fontweight='bold', ha='center')
+            fig.text(pos_loc_x_left, pos_loc_y_left, pdf_loc_note, fontsize=55 * fig_scale, fontweight='bold', ha='center')
+            
             return fig
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區 (包含左下局部圖與右側全圖)")
+        st.subheader("👁️ PDF 最終版面預覽區 (包含左下局部圖、左右雙標題)")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
