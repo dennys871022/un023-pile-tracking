@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V42", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (雙區標題與排版記憶版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V43", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雙機獨立統計版)")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
@@ -152,14 +152,19 @@ s = st.session_state.ui_settings
 df_history = fetch_current_data(sh_main)
 
 total_done_auto = len(df_history)
-today_done_auto = 0
+today_done_auto_a = 0
+today_done_auto_b = 0
 week_start_str = ""
 today_state_key = ""
 
 if not df_history.empty:
     df_history['施工日期_DT'] = pd.to_datetime(df_history['施工日期'], errors='coerce')
     latest_dt = df_history['施工日期_DT'].max()
-    today_done_auto = len(df_history[df_history['施工日期_DT'] == latest_dt])
+    today_data = df_history[df_history['施工日期_DT'] == latest_dt]
+    
+    today_done_auto_a = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('A')])
+    today_done_auto_b = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('B')])
+    
     today_state_key = latest_dt.strftime('%m/%d')
     
     monday = latest_dt - pd.Timedelta(days=latest_dt.weekday())
@@ -290,7 +295,8 @@ if not df_history.empty:
     pdf_loc_note_left = st.sidebar.text_input("左側副標題", s['pdf_loc_note_left'])
     
     pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
-    pdf_today_done = st.sidebar.number_input("本日完成 (支) [自動統計]", value=today_done_auto)
+    pdf_today_done_a = st.sidebar.number_input("本日完成 A機 (支) [自動統計]", value=today_done_auto_a)
+    pdf_today_done_b = st.sidebar.number_input("本日完成 B機 (支) [自動統計]", value=today_done_auto_b)
     pdf_cum_done = st.sidebar.number_input("累積完成 (支) [自動統計]", value=total_done_auto)
     
     st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調")
@@ -314,7 +320,6 @@ if not df_history.empty:
         pos_leg_y = st.slider("圖例 高度 (Y)", -1.0, 1.5, s['pos_leg_y'], 0.01)
         st.form_submit_button("🔄 套用文字位置")
 
-    # 【新增功能】：儲存排版設定至 Google Sheets
     if st.sidebar.button("💾 記憶當前排版與標題 (永久儲存)"):
         new_settings = {
             "pdf_loc_note_right": pdf_loc_note_right,
@@ -427,7 +432,13 @@ if not df_history.empty:
             week_range = f"{week_start_str}~{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
             
             fig.text(0.05, pos_title_y, f"{today_str} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
-            info_lines = [f"本週預計完成 {pdf_week_est} 支", f"{week_range}", f"本日完成 {pdf_today_done} 支", f"{today_str}", f"累積完成 {pdf_cum_done} 支"]
+            info_lines = [
+                f"本週預計完成 {pdf_week_est} 支",
+                f"{week_range}",
+                f"本日完成 A機:{pdf_today_done_a}支 B機:{pdf_today_done_b}支",
+                f"{today_str}",
+                f"累積完成 {pdf_cum_done} 支"
+            ]
             fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35 * fig_scale, linespacing=1.6, va='top')
             
             fig.text(pos_loc_x, pos_loc_y, pdf_loc_note_right, fontsize=55 * fig_scale, fontweight='bold', ha='center')
@@ -437,7 +448,7 @@ if not df_history.empty:
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區 (包含左下局部圖、左右獨立雙標題)")
+        st.subheader("👁️ PDF 最終版面預覽區")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
