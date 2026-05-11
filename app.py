@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V41", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (專注局部視角版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V42", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雙區標題與排版記憶版)")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
@@ -76,6 +76,60 @@ def get_gs_connection():
         st.error(f"雲端連線異常: {e}")
         return None, None
 
+def load_settings(ss):
+    default_settings = {
+        "pdf_loc_note_right": "滯洪池B.C",
+        "pdf_loc_note_left": "滯洪池A",
+        "fig_scale": 1.5, "marker_size": 180, "lbl_fontsize": 18, "text_offset": 20,
+        "pos_title_y": 0.90, "pos_info_x": 0.05, "pos_info_y": 0.85,
+        "pos_loc_x": 0.70, "pos_loc_y": 0.95, "pos_loc_x_left": 0.22, "pos_loc_y_left": 0.55,
+        "pos_leg_x": 0.00, "pos_leg_y": 0.00
+    }
+    if ss is None: return default_settings
+    try:
+        sh = ss.worksheet("系統設定")
+    except:
+        try:
+            sh = ss.add_worksheet("系統設定", 50, 2)
+            out = [['Key', 'Value']]
+            for k, v in default_settings.items():
+                out.append([k, str(v)])
+            sh.append_rows(out)
+            return default_settings
+        except:
+            return default_settings
+    try:
+        records = sh.get_all_records()
+        loaded = {}
+        for r in records:
+            k = r.get('Key')
+            v = r.get('Value')
+            if k in default_settings:
+                try:
+                    if isinstance(default_settings[k], float):
+                        loaded[k] = float(v)
+                    elif isinstance(default_settings[k], int):
+                        loaded[k] = int(float(v))
+                    else:
+                        loaded[k] = str(v)
+                except:
+                    loaded[k] = default_settings[k]
+        return {**default_settings, **loaded}
+    except:
+        return default_settings
+
+def save_settings(ss, settings_dict):
+    if ss is None: return
+    try:
+        sh = ss.worksheet("系統設定")
+        sh.clear()
+        out = [['Key', 'Value']]
+        for k, v in settings_dict.items():
+            out.append([k, str(v)])
+        sh.append_rows(out)
+    except Exception as e:
+        st.error(f"設定儲存失敗: {e}")
+
 def fetch_current_data(sh_main):
     if sh_main is None: return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
     try:
@@ -89,6 +143,12 @@ def fetch_current_data(sh_main):
         return pd.DataFrame(columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
 
 ss, sh_main = get_gs_connection()
+
+if 'ui_settings' not in st.session_state:
+    st.session_state.ui_settings = load_settings(ss)
+
+s = st.session_state.ui_settings
+
 df_history = fetch_current_data(sh_main)
 
 total_done_auto = len(df_history)
@@ -225,8 +285,9 @@ st.info(f"當前暫存狀態：A機 {len(st.session_state.sel_a)} 支樁 | B機 
 if not df_history.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
-    pdf_loc_note_right = st.sidebar.text_input("右側主標題", "滯洪池BC")
-    pdf_loc_note_left = st.sidebar.text_input("左側副標題", "左側作業區")
+    
+    pdf_loc_note_right = st.sidebar.text_input("右側主標題", s['pdf_loc_note_right'])
+    pdf_loc_note_left = st.sidebar.text_input("左側副標題", s['pdf_loc_note_left'])
     
     pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
     pdf_today_done = st.sidebar.number_input("本日完成 (支) [自動統計]", value=today_done_auto)
@@ -234,24 +295,47 @@ if not df_history.empty:
     
     st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調")
     with st.sidebar.form("geom_controls"):
-        fig_scale = st.slider("畫布排樁間距拉開倍率", 1.0, 5.0, 1.5, 0.1)
-        marker_size = st.slider("圓圈大小", 50, 400, 180, 10)
-        lbl_fontsize = st.slider("樁號文字大小", 8, 40, 18, 1)
-        text_offset = st.slider("文字離圓圈距離", 5, 60, 20, 1)
+        fig_scale = st.slider("畫布排樁間距拉開倍率", 1.0, 5.0, s['fig_scale'], 0.1)
+        marker_size = st.slider("圓圈大小", 50, 400, s['marker_size'], 10)
+        lbl_fontsize = st.slider("樁號文字大小", 8, 40, s['lbl_fontsize'], 1)
+        text_offset = st.slider("文字離圓圈距離", 5, 60, s['text_offset'], 1)
         st.form_submit_button("🔄 套用幾何設定")
 
     st.sidebar.markdown("### 📐 PDF 文字位置微調")
     with st.sidebar.form("layout_controls"):
-        pos_title_y = st.slider("左上大標題 高度 (Y)", 0.0, 1.0, 0.90, 0.01)
-        pos_info_x = st.slider("統計資訊 左右 (X)", 0.0, 1.0, 0.05, 0.01)
-        pos_info_y = st.slider("統計資訊 高度 (Y)", 0.0, 1.0, 0.85, 0.01)
-        pos_loc_x = st.slider("右側位置標題 (X)", 0.0, 1.0, 0.70, 0.01)
-        pos_loc_y = st.slider("右側位置標題 (Y)", 0.0, 1.0, 0.95, 0.01)
-        pos_loc_x_left = st.slider("左側位置標題 (X)", 0.0, 1.0, 0.22, 0.01)
-        pos_loc_y_left = st.slider("左側位置標題 (Y)", 0.0, 1.0, 0.55, 0.01)
-        pos_leg_x = st.slider("圖例 左右 (X)", -1.0, 1.5, 0.00, 0.01)
-        pos_leg_y = st.slider("圖例 高度 (Y)", -1.0, 1.5, 0.00, 0.01)
+        pos_title_y = st.slider("左上大標題 高度 (Y)", 0.0, 1.0, s['pos_title_y'], 0.01)
+        pos_info_x = st.slider("統計資訊 左右 (X)", 0.0, 1.0, s['pos_info_x'], 0.01)
+        pos_info_y = st.slider("統計資訊 高度 (Y)", 0.0, 1.0, s['pos_info_y'], 0.01)
+        pos_loc_x = st.slider("右側位置標題 (X)", 0.0, 1.0, s['pos_loc_x'], 0.01)
+        pos_loc_y = st.slider("右側位置標題 (Y)", 0.0, 1.0, s['pos_loc_y'], 0.01)
+        pos_loc_x_left = st.slider("左側位置標題 (X)", 0.0, 1.0, s['pos_loc_x_left'], 0.01)
+        pos_loc_y_left = st.slider("左側位置標題 (Y)", 0.0, 1.0, s['pos_loc_y_left'], 0.01)
+        pos_leg_x = st.slider("圖例 左右 (X)", -1.0, 1.5, s['pos_leg_x'], 0.01)
+        pos_leg_y = st.slider("圖例 高度 (Y)", -1.0, 1.5, s['pos_leg_y'], 0.01)
         st.form_submit_button("🔄 套用文字位置")
+
+    # 【新增功能】：儲存排版設定至 Google Sheets
+    if st.sidebar.button("💾 記憶當前排版與標題 (永久儲存)"):
+        new_settings = {
+            "pdf_loc_note_right": pdf_loc_note_right,
+            "pdf_loc_note_left": pdf_loc_note_left,
+            "fig_scale": fig_scale,
+            "marker_size": marker_size,
+            "lbl_fontsize": lbl_fontsize,
+            "text_offset": text_offset,
+            "pos_title_y": pos_title_y,
+            "pos_info_x": pos_info_x,
+            "pos_info_y": pos_info_y,
+            "pos_loc_x": pos_loc_x,
+            "pos_loc_y": pos_loc_y,
+            "pos_loc_x_left": pos_loc_x_left,
+            "pos_loc_y_left": pos_loc_y_left,
+            "pos_leg_x": pos_leg_x,
+            "pos_leg_y": pos_leg_y
+        }
+        save_settings(ss, new_settings)
+        st.session_state.ui_settings = new_settings
+        st.sidebar.success("✅ 設定已成功寫入雲端！明天打開也會保持這個版面。")
 
     if MATPLOTLIB_READY:
         def draw_pdf_axis(ax, target_df, scale_factor=1.0, is_main=False):
@@ -353,7 +437,7 @@ if not df_history.empty:
 
         pdf_fig = create_pdf_figure()
         st.markdown("---")
-        st.subheader("👁️ PDF 最終版面預覽區")
+        st.subheader("👁️ PDF 最終版面預覽區 (包含左下局部圖、左右獨立雙標題)")
         st.pyplot(pdf_fig)
         
         buf = io.BytesIO()
