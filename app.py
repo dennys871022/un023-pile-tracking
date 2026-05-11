@@ -15,7 +15,7 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V43", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V44", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (雙機獨立統計版)")
 
 if 'sel_a' not in st.session_state:
@@ -154,6 +154,8 @@ df_history = fetch_current_data(sh_main)
 total_done_auto = len(df_history)
 today_done_auto_a = 0
 today_done_auto_b = 0
+this_week_done_a = 0
+this_week_done_b = 0
 week_start_str = ""
 today_state_key = ""
 
@@ -173,6 +175,9 @@ if not df_history.empty:
         earliest_this_week = this_week_data['施工日期_DT'].min()
         roc_y = earliest_this_week.year - 1911
         week_start_str = f"{roc_y}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
+        
+        this_week_done_a = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('A')])
+        this_week_done_b = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('B')])
 
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy()
@@ -295,9 +300,11 @@ if not df_history.empty:
     pdf_loc_note_left = st.sidebar.text_input("左側副標題", s['pdf_loc_note_left'])
     
     pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
+    pdf_this_week_done_a = st.sidebar.number_input("本週累積 A機 (支) [自動統計]", value=this_week_done_a)
+    pdf_this_week_done_b = st.sidebar.number_input("本週累積 B機 (支) [自動統計]", value=this_week_done_b)
     pdf_today_done_a = st.sidebar.number_input("本日完成 A機 (支) [自動統計]", value=today_done_auto_a)
     pdf_today_done_b = st.sidebar.number_input("本日完成 B機 (支) [自動統計]", value=today_done_auto_b)
-    pdf_cum_done = st.sidebar.number_input("累積完成 (支) [自動統計]", value=total_done_auto)
+    pdf_cum_done = st.sidebar.number_input("總累積完成 (支) [自動統計]", value=total_done_auto)
     
     st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調")
     with st.sidebar.form("geom_controls"):
@@ -435,6 +442,7 @@ if not df_history.empty:
             info_lines = [
                 f"本週預計完成 {pdf_week_est} 支",
                 f"{week_range}",
+                f"本週累積 A機:{pdf_this_week_done_a}支 B機:{pdf_this_week_done_b}支",
                 f"本日完成 A機:{pdf_today_done_a}支 B機:{pdf_today_done_b}支",
                 f"{today_str}",
                 f"累積完成 {pdf_cum_done} 支"
