@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V45", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (數據量化精準版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V46", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (數據量化精準穩定版)")
 
 # 初始化 Session State
 if 'sel_a' not in st.session_state:
@@ -90,7 +90,18 @@ def load_settings(ss):
     try:
         sh = ss.worksheet("系統設定")
         records = sh.get_all_records()
-        loaded = {r['Key']: (float(r['Value']) if r['Key'] not in ["pdf_loc_note_right", "pdf_loc_note_left"] else str(r['Value'])) for r in records if r.get('Key') in default_settings}
+        loaded = {}
+        for r in records:
+            k = r.get('Key')
+            v = r.get('Value')
+            if k in default_settings:
+                # 【修復崩潰點】：強制根據預設值的型態轉換，防止 float 混入 int 導致滑桿崩潰
+                if isinstance(default_settings[k], int):
+                    loaded[k] = int(float(v))
+                elif isinstance(default_settings[k], float):
+                    loaded[k] = float(v)
+                else:
+                    loaded[k] = str(v)
         return {**default_settings, **loaded}
     except:
         return default_settings
