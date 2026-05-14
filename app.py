@@ -16,7 +16,7 @@ except ImportError:
     MATPLOTLIB_READY = False
 
 st.set_page_config(page_title="UN023 排樁進度系統 V49", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (選取區數量確認版)")
+st.title("🏗️ UN023 排樁進度管理 (數據量化精準完美版)")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
@@ -300,47 +300,88 @@ if not df_history.empty:
 
     if MATPLOTLIB_READY:
         def draw_pdf_axis(ax, target_df, scale_factor=1.0, is_main=False):
-            if target_df.empty: ax.axis('off'); return
+            if target_df.empty: 
+                ax.axis('off')
+                return
+            
             states = ['未完成', '[已完成]'] + sorted([s for s in target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
-            colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}; color_idx = 0; pal = px.colors.qualitative.Plotly
+            colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}
+            color_idx = 0
+            pal = px.colors.qualitative.Plotly
+            
+            msize = marker_size * scale_factor
+            fsize = lbl_fontsize * scale_factor
+            offset = text_offset * scale_factor
+            
             for state in states:
                 sub = target_df[target_df['狀態'] == state]
-                if sub.empty: continue
-                c = colors.get(state, pal[color_idx % len(pal)]); 
-                if state not in colors: color_idx += 1
-                if state == '未完成': ax.scatter(sub['X'], sub['Y'], facecolors='none', edgecolors=c, s=marker_size*scale_factor, lw=1.5, zorder=2)
+                if sub.empty: 
+                    continue
+                
+                c = colors.get(state, pal[color_idx % len(pal)])
+                if state not in colors: 
+                    color_idx += 1
+                
+                if state == '未完成': 
+                    ax.scatter(sub['X'], sub['Y'], facecolors='none', edgecolors=c, s=msize, lw=1.5, zorder=2)
                 else:
-                    ax.scatter(sub['X'], sub['Y'], color=c, s=marker_size*scale_factor, zorder=3, label=f"{state} 樁號 ○ 施作順序" if is_main else None)
+                    legend_label = f"{state} 樁號 ○ 施作順序" if is_main else None
+                    ax.scatter(sub['X'], sub['Y'], color=c, s=msize, zorder=3, label=legend_label)
+                    
                     if state == today_state_key:
                         for _, row in sub.iterrows():
-                            is_h = row['is_horizontal']; p = row['樁號']; s_txt = row['純順序']; off = text_offset*scale_factor; fs = lbl_fontsize*scale_factor
+                            is_h = row['is_horizontal']
+                            p = row['樁號']
+                            s_txt = row['純順序']
+                            
                             if is_h: 
-                                ax.annotate(p, (row['X'], row['Y']), xytext=(0, off), textcoords='offset points', fontsize=fs, fontweight='bold', ha='center', va='bottom', zorder=4)
-                                if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(0, -off), textcoords='offset points', fontsize=fs, color=c, ha='center', va='top', zorder=4)
+                                ax.annotate(p, (row['X'], row['Y']), xytext=(0, offset), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='center', va='bottom', zorder=4)
+                                if s_txt: 
+                                    ax.annotate(s_txt, (row['X'], row['Y']), xytext=(0, -offset), textcoords='offset points', fontsize=fsize, color=c, ha='center', va='top', zorder=4)
                             else:
-                                ax.annotate(p, (row['X'], row['Y']), xytext=(-off, 0), textcoords='offset points', fontsize=fs, fontweight='bold', ha='right', va='center', zorder=4)
-                                if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fs, color=c, ha='left', va='center', zorder=4)
-            ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
+                                ax.annotate(p, (row['X'], row['Y']), xytext=(-offset, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='right', va='center', zorder=4)
+                                if s_txt: 
+                                    ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fsize, color=c, ha='left', va='center', zorder=4)
+            
+            ax.margins(0.1)
+            ax.set_aspect('equal', adjustable='datalim')
+            ax.axis('off')
 
         def create_pdf_figure():
-            font_name = setup_chinese_font(); 
-            if font_name: plt.rcParams['font.family'] = font_name
+            font_name = setup_chinese_font()
+            if font_name: 
+                plt.rcParams['font.family'] = font_name
+                
             fig = plt.figure(figsize=(24 * fig_scale, 16 * fig_scale))
             has_a, has_b = bool(st.session_state.sel_a), bool(st.session_state.sel_b)
             
             if not (has_a or has_b):
-                ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax, df_p, 1.0, True)
+                ax = fig.add_axes([0.45, 0.1, 0.5, 0.75])
+                draw_pdf_axis(ax, df_p, 1.0, True)
                 ax.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
             else:
                 if has_a and has_b:
-                    ax_a = fig.add_axes([0.35, 0.1, 0.30, 0.75]); draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True); ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05); ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
-                    ax_b = fig.add_axes([0.68, 0.1, 0.30, 0.75]); draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, False); ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    ax_a = fig.add_axes([0.35, 0.1, 0.30, 0.75])
+                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True)
+                    ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
+                    
+                    ax_b = fig.add_axes([0.68, 0.1, 0.30, 0.75])
+                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, False)
+                    ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
                 elif has_a:
-                    ax_a = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True); ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05); ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
+                    ax_a = fig.add_axes([0.45, 0.1, 0.5, 0.75])
+                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True)
+                    ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
                 elif has_b:
-                    ax_b = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, True); ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05); ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
+                    ax_b = fig.add_axes([0.45, 0.1, 0.5, 0.75])
+                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, True)
+                    ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
 
-            roc_y = datetime.date.today().year - 1911; today_roc = f"{roc_y}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
+            roc_y = datetime.date.today().year - 1911
+            today_roc = f"{roc_y}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             
             latest_dt = pd.to_datetime(df_history['施工日期'], errors='coerce').max()
             if pd.isna(latest_dt): latest_dt = datetime.date.today()
@@ -366,26 +407,32 @@ if not df_history.empty:
             fig.text(pos_loc_x_left, pos_loc_y_left, pdf_loc_note_left, fontsize=55 * fig_scale, fontweight='bold', ha='center')
             return fig
 
-        pdf_fig = create_pdf_figure(); st.markdown("---"); st.pyplot(pdf_fig)
-        buf = io.BytesIO(); pdf_fig.savefig(buf, format='pdf', bbox_inches='tight'); plt.close(pdf_fig)
+        pdf_fig = create_pdf_figure()
+        st.markdown("---")
+        st.pyplot(pdf_fig)
+        buf = io.BytesIO()
+        pdf_fig.savefig(buf, format='pdf', bbox_inches='tight')
+        plt.close(pdf_fig)
         st.sidebar.download_button("🔴 匯出 PDF 報表", buf.getvalue(), f"Plan_{datetime.date.today()}.pdf", type="primary")
 
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
-            h_df.to_excel(wr, sheet_name='施工明細', index=False); wb = wr.book; ws = wb.add_worksheet('全區進度圖'); ch = wb.add_chart({'type': 'scatter'})
+            h_df.to_excel(wr, sheet_name='施工明細', index=False)
+            wb = wr.book; ws = wb.add_worksheet('全區進度圖'); ch = wb.add_chart({'type': 'scatter'})
             col = 10; states = ['未完成', '[已完成]'] + sorted([s for s in p_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
             colors = {'未完成': '#696969', '[已完成]': '#FFB6C1'}; pal = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']; ci = 0
             for s in states:
-                sub = p_df[p_df['狀態'] == s].reset_index(drop=True); 
+                sub = p_df[p_df['狀態'] == s].reset_index(drop=True)
                 if sub.empty: continue
                 sub[['X', 'Y', '標籤']].to_excel(wr, sheet_name='全區進度圖', startcol=col, index=False)
-                mc = colors.get(s, pal[ci % len(pal)]); 
+                mc = colors.get(s, pal[ci % len(pal)]) 
                 if s not in colors: ci += 1
                 sd = {'name': s, 'categories': ['全區進度圖', 1, col, len(sub), col], 'values': ['全區進度圖', 1, col+1, len(sub), col+1], 'marker': {'type': 'circle', 'size': 6, 'fill': {'color': mc}, 'border': {'color': mc}}}
                 if s == '未完成': sd['marker']['fill'] = {'none': True}
                 if s != '未完成': sd['data_labels'] = {'custom': [{'value': f'=全區進度圖!${xlsxwriter.utility.xl_col_to_name(col+2)}${ri+2}'} for ri in range(len(sub))], 'position': 'above', 'font': {'size': 8}}
-                ch.add_series(sd); col += 4
+                ch.add_series(sd)
+                col += 4
             ch.set_x_axis({'visible': False}); ch.set_y_axis({'visible': False}); ws.insert_chart('B2', ch)
         return out.getvalue()
     st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx")
