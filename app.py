@@ -15,10 +15,9 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V48", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (數據量化精準完美版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V49", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (選取區數量確認版)")
 
-# 初始化 Session State
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
 if 'sel_b' not in st.session_state:
@@ -132,7 +131,6 @@ if 'ui_settings' not in st.session_state:
 s = st.session_state.ui_settings
 df_history = fetch_current_data(sh_main)
 
-# === 統計運算引擎 ===
 total_done_auto = len(df_history)
 total_perc = (total_done_auto / 613) * 100 if 613 > 0 else 0
 today_done_auto_a = 0
@@ -189,7 +187,6 @@ def process_status_logic(df_hist, df_b):
 
 df_p = process_status_logic(df_history, df_base)
 
-# === 選取區數據量化計算 ===
 def get_local_stats(sel_list, p_df):
     if not sel_list: return 0, 0
     sub = p_df[p_df['樁號'].isin(sel_list)]
@@ -200,7 +197,6 @@ def get_local_stats(sel_list, p_df):
 local_a_done, local_a_total = get_local_stats(st.session_state.sel_a, df_p)
 local_b_done, local_b_total = get_local_stats(st.session_state.sel_b, df_p)
 
-# === UI 配置 ===
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = c1.date_input("日期"); machine = c2.radio("機台", ["A車", "B車"], horizontal=True)
@@ -256,6 +252,11 @@ try:
     selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]] if selection_event and "selection" in selection_event and selection_event["selection"]["points"] else []
 except: selected_piles = []
 
+if selected_piles:
+    st.success(f"🎯 畫面上目前已選取： **{len(selected_piles)}** 支樁位 (確認數量後請點擊下方按鈕分配)")
+else:
+    st.caption("💡 提示：請在地圖上方框選樁位，此處會即時顯示選取數量。")
+
 col_btn1, col_btn2, col_btn3 = st.columns(3)
 with col_btn1:
     if st.button("📌 設定為 A機範圍"): st.session_state.sel_a = selected_piles; st.rerun()
@@ -263,6 +264,8 @@ with col_btn2:
     if st.button("📌 設定為 B機範圍"): st.session_state.sel_b = selected_piles; st.rerun()
 with col_btn3:
     if st.button("🗑️ 清除選取"): st.session_state.sel_a = []; st.session_state.sel_b = []; st.rerun()
+
+st.info(f"當前暫存狀態：A機 {len(st.session_state.sel_a)} 支樁 | B機 {len(st.session_state.sel_b)} 支樁")
 
 if not df_history.empty:
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
@@ -316,7 +319,7 @@ if not df_history.empty:
                                 if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(0, -off), textcoords='offset points', fontsize=fs, color=c, ha='center', va='top', zorder=4)
                             else:
                                 ax.annotate(p, (row['X'], row['Y']), xytext=(-off, 0), textcoords='offset points', fontsize=fs, fontweight='bold', ha='right', va='center', zorder=4)
-                                if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(off, 0), textcoords='offset points', fontsize=fs, color=c, ha='left', va='center', zorder=4)
+                                if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fs, color=c, ha='left', va='center', zorder=4)
             ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
 
         def create_pdf_figure():
@@ -347,7 +350,6 @@ if not df_history.empty:
             a_pct_str = f" ({(local_a_done/local_a_total)*100:.2f}%)" if local_a_total > 0 else ""
             b_pct_str = f" ({(local_b_done/local_b_total)*100:.2f}%)" if local_b_total > 0 else ""
             
-            # 【更新】將B機排到下一行並縮排，且刪除多餘的日期行
             info_lines = [
                 f"本週預計完成 {pdf_week_est} 支",
                 f"{week_start_str}~{week_end_str}",
