@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V46", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (數據量化精準穩定版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V47", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (數據量化精準完美版)")
 
 # 初始化 Session State
 if 'sel_a' not in st.session_state:
@@ -95,7 +95,6 @@ def load_settings(ss):
             k = r.get('Key')
             v = r.get('Value')
             if k in default_settings:
-                # 【修復崩潰點】：強制根據預設值的型態轉換，防止 float 混入 int 導致滑桿崩潰
                 if isinstance(default_settings[k], int):
                     loaded[k] = int(float(v))
                 elif isinstance(default_settings[k], float):
@@ -152,18 +151,21 @@ if not df_history.empty:
     today_done_auto_a = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('A')])
     today_done_auto_b = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('B')])
     
-    # 歷史總累積 AB 機拆分
     cum_done_a = len(df_history[df_history['機台'].astype(str).str.upper().str.contains('A')])
     cum_done_b = len(df_history[df_history['機台'].astype(str).str.upper().str.contains('B')])
     
     today_state_key = latest_dt.strftime('%m/%d')
     monday = latest_dt - pd.Timedelta(days=latest_dt.weekday())
     this_week_data = df_history[df_history['施工日期_DT'] >= monday]
+    
+    # 【更新】：起頭強制抓取本週「有資料的最早日期」
     if not this_week_data.empty:
         earliest_this_week = this_week_data['施工日期_DT'].min()
         week_start_str = f"{earliest_this_week.year-1911}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
         this_week_done_a = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('A')])
         this_week_done_b = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('B')])
+    else:
+        week_start_str = f"{monday.year-1911}/{monday.month:02d}/{monday.day:02d}"
 
 def process_status_logic(df_hist, df_b):
     plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy().sort_values('數字').reset_index(drop=True)
@@ -337,12 +339,23 @@ if not df_history.empty:
                     ax_b = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, True); ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05); ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
 
             roc_y = datetime.date.today().year - 1911; today_roc = f"{roc_y}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
+            
+            # 【更新】：強制以本週日作為結尾
+            latest_dt = pd.to_datetime(df_history['施工日期'], errors='coerce').max()
+            if pd.isna(latest_dt): latest_dt = datetime.date.today()
+            sunday = latest_dt + datetime.timedelta(days=(6 - latest_dt.weekday()))
+            week_end_str = f"{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
+            
+            # 【更新】：加入精確選取區百分比
+            a_pct_str = f" ({(local_a_done/local_a_total)*100:.2f}%)" if local_a_total > 0 else ""
+            b_pct_str = f" ({(local_b_done/local_b_total)*100:.2f}%)" if local_b_total > 0 else ""
+            
             info_lines = [
                 f"本週預計完成 {pdf_week_est} 支",
-                f"{week_start_str}~{today_roc}",
+                f"{week_start_str}~{week_end_str}",
                 f"本週累積 A機:{this_week_done_a}支 B機:{this_week_done_b}支",
                 f"本日完成 A機:{today_done_auto_a}支 B機:{today_done_auto_b}支",
-                f"選取區 A機:{local_a_done}/{local_a_total} B機:{local_b_done}/{local_b_total}",
+                f"選取區 A機:{local_a_done}/{local_a_total}{a_pct_str} B機:{local_b_done}/{local_b_total}{b_pct_str}",
                 f"{today_roc}",
                 f"累積完成 {total_done_auto} 支 ({total_done_auto}/613, {total_perc:.2f}%)",
                 f"累積 A機:{cum_done_a}支 B機:{cum_done_b}支"
