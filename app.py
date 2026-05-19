@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V50", layout="wide")
-st.title("🏗️ CDC結構預壘樁進度管理 ")
+st.set_page_config(page_title="UN023 排樁進度系統 V51", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (自動記憶與圖位微調版)")
 
 # 初始化 Session State
 if 'sel_a' not in st.session_state:
@@ -81,10 +81,13 @@ def load_settings(ss):
     default_settings = {
         "pdf_loc_note_right": "滯洪池B.C",
         "pdf_loc_note_left": "滯洪池A",
+        "pdf_week_est": 36,
         "fig_scale": 1.5, "marker_size": 180, "lbl_fontsize": 18, "text_offset": 20,
         "pos_title_y": 0.90, "pos_info_x": 0.05, "pos_info_y": 0.85,
         "pos_loc_x": 0.70, "pos_loc_y": 0.95, "pos_loc_x_left": 0.22, "pos_loc_y_left": 0.55,
-        "pos_leg_x": 0.00, "pos_leg_y": 0.00
+        "pos_leg_x": 0.00, "pos_leg_y": 0.00,
+        "pos_img_a_x": 0.35, "pos_img_a_y": 0.10, "pos_img_a_w": 0.30,
+        "pos_img_b_x": 0.68, "pos_img_b_y": 0.10, "pos_img_b_w": 0.30
     }
     if ss is None: return default_settings
     try:
@@ -130,6 +133,15 @@ if 'ui_settings' not in st.session_state:
     st.session_state.ui_settings = load_settings(ss)
 
 s = st.session_state.ui_settings
+
+# 將文字輸入框預設值寫入 Session State，防止畫面重整時跳回
+if "pdf_loc_note_right" not in st.session_state:
+    st.session_state["pdf_loc_note_right"] = s['pdf_loc_note_right']
+if "pdf_loc_note_left" not in st.session_state:
+    st.session_state["pdf_loc_note_left"] = s['pdf_loc_note_left']
+if "pdf_week_est" not in st.session_state:
+    st.session_state["pdf_week_est"] = int(s.get('pdf_week_est', 36))
+
 df_history = fetch_current_data(sh_main)
 
 total_done_auto = len(df_history)
@@ -270,9 +282,10 @@ st.info(f"當前暫存狀態：A機 {len(st.session_state.sel_a)} 支樁 | B機 
 
 if not df_history.empty:
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
-    pdf_loc_note_right = st.sidebar.text_input("右側主標題", s['pdf_loc_note_right'])
-    pdf_loc_note_left = st.sidebar.text_input("左側副標題", s['pdf_loc_note_left'])
-    pdf_week_est = st.sidebar.number_input("本週預計完成 (支)", value=36)
+    # 使用 key 綁定 Session State，解決輸入跳回的問題
+    st.sidebar.text_input("右側主標題", key="pdf_loc_note_right")
+    st.sidebar.text_input("左側副標題", key="pdf_loc_note_left")
+    st.sidebar.number_input("本週預計完成 (支)", key="pdf_week_est")
     
     st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調")
     with st.sidebar.form("geom"):
@@ -282,7 +295,7 @@ if not df_history.empty:
         text_offset = st.slider("文字離圓圈距離", 5, 60, s['text_offset'], 1)
         st.form_submit_button("🔄 套用幾何設定")
 
-    st.sidebar.markdown("### 📐 PDF 文字位置微調")
+    st.sidebar.markdown("### 📐 PDF 文字與截圖位置微調")
     with st.sidebar.form("layout"):
         pos_title_y = st.slider("大標題高度 (Y)", 0.0, 1.0, s['pos_title_y'], 0.01)
         pos_info_x = st.slider("資訊區左右 (X)", 0.0, 1.0, s['pos_info_x'], 0.01)
@@ -293,11 +306,31 @@ if not df_history.empty:
         pos_loc_y_left = st.slider("左側標題 (Y)", 0.0, 1.0, s['pos_loc_y_left'], 0.01)
         pos_leg_x = st.slider("圖例左右 (X)", -1.0, 1.5, s['pos_leg_x'], 0.01)
         pos_leg_y = st.slider("圖例高度 (Y)", -1.0, 1.5, s['pos_leg_y'], 0.01)
-        st.form_submit_button("🔄 套用位置設定")
+        
+        st.markdown("#### 局部預覽圖位置微調")
+        pos_img_a_x = st.slider("A機圖 左右 (X)", 0.0, 1.0, s.get('pos_img_a_x', 0.35), 0.01)
+        pos_img_a_y = st.slider("A機圖 高度 (Y)", 0.0, 1.0, s.get('pos_img_a_y', 0.10), 0.01)
+        pos_img_a_w = st.slider("A機圖 寬度 (W)", 0.1, 1.0, s.get('pos_img_a_w', 0.30), 0.01)
+        
+        pos_img_b_x = st.slider("B機圖 左右 (X)", 0.0, 1.0, s.get('pos_img_b_x', 0.68), 0.01)
+        pos_img_b_y = st.slider("B機圖 高度 (Y)", 0.0, 1.0, s.get('pos_img_b_y', 0.10), 0.01)
+        pos_img_b_w = st.slider("B機圖 寬度 (W)", 0.1, 1.0, s.get('pos_img_b_w', 0.30), 0.01)
+        
+        st.form_submit_button("🔄 套用排版與圖位設定")
 
     if st.sidebar.button("💾 記憶當前排版與標題 (永久儲存)"):
-        new_s = {"pdf_loc_note_right": pdf_loc_note_right, "pdf_loc_note_left": pdf_loc_note_left, "fig_scale": fig_scale, "marker_size": marker_size, "lbl_fontsize": lbl_fontsize, "text_offset": text_offset, "pos_title_y": pos_title_y, "pos_info_x": pos_info_x, "pos_info_y": pos_info_y, "pos_loc_x": pos_loc_x, "pos_loc_y": pos_loc_y, "pos_loc_x_left": pos_loc_x_left, "pos_loc_y_left": pos_loc_y_left, "pos_leg_x": pos_leg_x, "pos_leg_y": pos_leg_y}
-        save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已記憶")
+        new_s = {
+            "pdf_loc_note_right": st.session_state.pdf_loc_note_right, 
+            "pdf_loc_note_left": st.session_state.pdf_loc_note_left,
+            "pdf_week_est": st.session_state.pdf_week_est,
+            "fig_scale": fig_scale, "marker_size": marker_size, "lbl_fontsize": lbl_fontsize, "text_offset": text_offset, 
+            "pos_title_y": pos_title_y, "pos_info_x": pos_info_x, "pos_info_y": pos_info_y, 
+            "pos_loc_x": pos_loc_x, "pos_loc_y": pos_loc_y, "pos_loc_x_left": pos_loc_x_left, "pos_loc_y_left": pos_loc_y_left, 
+            "pos_leg_x": pos_leg_x, "pos_leg_y": pos_leg_y,
+            "pos_img_a_x": pos_img_a_x, "pos_img_a_y": pos_img_a_y, "pos_img_a_w": pos_img_a_w,
+            "pos_img_b_x": pos_img_b_x, "pos_img_b_y": pos_img_b_y, "pos_img_b_w": pos_img_b_w
+        }
+        save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
     if MATPLOTLIB_READY:
         def draw_pdf_axis(ax, target_df, scale_factor=1.0, is_main=False):
@@ -333,13 +366,18 @@ if not df_history.empty:
                 ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax, df_p, 1.0, True)
                 ax.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
             else:
-                if has_a and has_b:
-                    ax_a = fig.add_axes([0.35, 0.1, 0.30, 0.75]); draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True); ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05); ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
-                    ax_b = fig.add_axes([0.68, 0.1, 0.30, 0.75]); draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, False); ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
-                elif has_a:
-                    ax_a = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True); ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05); ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
-                elif has_b:
-                    ax_b = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, True); ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05); ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
+                if has_a:
+                    ax_a = fig.add_axes([pos_img_a_x, pos_img_a_y, pos_img_a_w, 0.75])
+                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True)
+                    ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
+                if has_b:
+                    ax_b = fig.add_axes([pos_img_b_x, pos_img_b_y, pos_img_b_w, 0.75])
+                    is_main_b = not has_a
+                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, is_main_b)
+                    ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    if is_main_b:
+                        ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
 
             roc_y = datetime.date.today().year - 1911; today_roc = f"{roc_y}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             
@@ -352,7 +390,7 @@ if not df_history.empty:
             b_pct_str = f" ({(local_b_done/local_b_total)*100:.2f}%)" if local_b_total > 0 else ""
             
             info_lines = [
-                f"本週預計完成 {pdf_week_est} 支",
+                f"本週預計完成 {st.session_state.pdf_week_est} 支",
                 f"{week_start_str}~{week_end_str}",
                 f"本週累積 A機:{this_week_done_a}支 B機:{this_week_done_b}支",
                 f"本日完成 A機:{today_done_auto_a}支 B機:{today_done_auto_b}支",
@@ -363,8 +401,8 @@ if not df_history.empty:
             ]
             fig.text(0.05, pos_title_y, f"{today_roc} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
             fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35 * fig_scale, linespacing=1.6, va='top')
-            fig.text(pos_loc_x, pos_loc_y, pdf_loc_note_right, fontsize=55 * fig_scale, fontweight='bold', ha='center')
-            fig.text(pos_loc_x_left, pos_loc_y_left, pdf_loc_note_left, fontsize=55 * fig_scale, fontweight='bold', ha='center')
+            fig.text(pos_loc_x, pos_loc_y, st.session_state.pdf_loc_note_right, fontsize=55 * fig_scale, fontweight='bold', ha='center')
+            fig.text(pos_loc_x_left, pos_loc_y_left, st.session_state.pdf_loc_note_left, fontsize=55 * fig_scale, fontweight='bold', ha='center')
             return fig
 
         pdf_fig = create_pdf_figure(); st.markdown("---"); st.pyplot(pdf_fig)
