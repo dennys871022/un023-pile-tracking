@@ -15,7 +15,7 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V51", layout="wide")
+st.set_page_config(page_title="UN023 排樁進度系統 V52", layout="wide")
 st.title("🏗️ UN023 排樁進度管理 (自動記憶與圖位微調版)")
 
 # 初始化 Session State
@@ -134,7 +134,6 @@ if 'ui_settings' not in st.session_state:
 
 s = st.session_state.ui_settings
 
-# 將文字輸入框預設值寫入 Session State，防止畫面重整時跳回
 if "pdf_loc_note_right" not in st.session_state:
     st.session_state["pdf_loc_note_right"] = s['pdf_loc_note_right']
 if "pdf_loc_note_left" not in st.session_state:
@@ -282,10 +281,10 @@ st.info(f"當前暫存狀態：A機 {len(st.session_state.sel_a)} 支樁 | B機 
 
 if not df_history.empty:
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
-    # 使用 key 綁定 Session State，解決輸入跳回的問題
     st.sidebar.text_input("右側主標題", key="pdf_loc_note_right")
     st.sidebar.text_input("左側副標題", key="pdf_loc_note_left")
-    st.sidebar.number_input("本週預計完成 (支)", key="pdf_week_est")
+    # 【更新】：加入 step=1 強制整數輸入
+    st.sidebar.number_input("本週預計完成 (支)", key="pdf_week_est", step=1)
     
     st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調")
     with st.sidebar.form("geom"):
