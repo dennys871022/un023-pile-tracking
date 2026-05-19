@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V52", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (自動記憶與圖位微調版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V53", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雙重擷取精準版)")
 
 # 初始化 Session State
 if 'sel_a' not in st.session_state:
@@ -258,32 +258,59 @@ fig_web.update_traces(selector=dict(name='未完成'), marker=dict(symbol='circl
 fig_web.update_traces(selector=lambda t: t.name != '未完成', marker=dict(symbol='circle', size=16, line=dict(width=1, color='white')), textposition='top right')
 fig_web.update_layout(xaxis_visible=False, yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), height=900, plot_bgcolor='white', dragmode='pan')
 
-st.subheader("🗺️ 網頁選取區 (框選後可指定局部範圍)")
+st.subheader("🗺️ 網頁選取區 (框選或輸入以擷取局部圖)")
 try:
     selection_event = st.plotly_chart(fig_web, use_container_width=True, config={'scrollZoom': True}, on_select="rerun", selection_mode=('box', 'lasso'))
     selected_piles = [pt["customdata"][0] for pt in selection_event["selection"]["points"]] if selection_event and "selection" in selection_event and selection_event["selection"]["points"] else []
 except: selected_piles = []
 
 if selected_piles:
-    st.success(f"🎯 畫面上目前已選取： **{len(selected_piles)}** 支樁位 (確認數量後請點擊下方按鈕分配)")
+    st.success(f"🎯 畫面上滑鼠目前已選取： **{len(selected_piles)}** 支樁位")
 else:
-    st.caption("💡 提示：請在地圖上方框選樁位，此處會即時顯示選取數量。")
+    st.caption("💡 提示：請在地圖上方拉框選取，或直接使用下方文字輸入範圍。")
 
-col_btn1, col_btn2, col_btn3 = st.columns(3)
-with col_btn1:
-    if st.button("📌 設定為 A機範圍"): st.session_state.sel_a = selected_piles; st.rerun()
-with col_btn2:
-    if st.button("📌 設定為 B機範圍"): st.session_state.sel_b = selected_piles; st.rerun()
-with col_btn3:
-    if st.button("🗑️ 清除選取"): st.session_state.sel_a = []; st.session_state.sel_b = []; st.rerun()
+# --- 解析手動輸入字串轉換為樁號清單 ---
+def parse_range_to_piles(raw_str):
+    plist = []
+    if raw_str:
+        pts = re.split(r'[,\s]+', re.sub(r'[pP]', '', raw_str))
+        for pt in pts:
+            if '-' in pt:
+                try:
+                    s_idx, e_idx = map(int, pt.split('-'))
+                    rs = 1 if s_idx <= e_idx else -1
+                    for n in range(s_idx, e_idx + rs, rs): plist.append(f"P{n}")
+                except: pass
+            elif pt.isdigit(): plist.append(f"P{pt}")
+    return list(dict.fromkeys(plist)) # 去除重複並保留順序
 
-st.info(f"當前暫存狀態：A機 {len(st.session_state.sel_a)} 支樁 | B機 {len(st.session_state.sel_b)} 支樁")
+st.markdown("#### ⚙️ 分配 PDF 局部截圖範圍")
+c_btn1, c_btn2, c_btn3 = st.columns([1.5, 2, 1])
+
+with c_btn1:
+    st.markdown("**👉 方式一：將【滑鼠框選】的範圍分配給**")
+    cb1, cb2 = st.columns(2)
+    if cb1.button("📌 A機 (框選)"): st.session_state.sel_a = selected_piles; st.rerun()
+    if cb2.button("📌 B機 (框選)"): st.session_state.sel_b = selected_piles; st.rerun()
+
+with c_btn2:
+    st.markdown("**👉 方式二：將【文字輸入】的範圍分配給**")
+    manual_raw = st.text_input("輸入樁號區間 (如: 175-210, 301)", label_visibility="collapsed")
+    cb3, cb4 = st.columns(2)
+    if cb3.button("📌 A機 (輸入)"): st.session_state.sel_a = parse_range_to_piles(manual_raw); st.rerun()
+    if cb4.button("📌 B機 (輸入)"): st.session_state.sel_b = parse_range_to_piles(manual_raw); st.rerun()
+
+with c_btn3:
+    st.markdown("**🗑️ 重新設定**")
+    if st.button("清除所有截圖", use_container_width=True): st.session_state.sel_a = []; st.session_state.sel_b = []; st.rerun()
+
+st.info(f"當前 PDF 暫存狀態：A機截圖區包含 {len(st.session_state.sel_a)} 支樁 | B機截圖區包含 {len(st.session_state.sel_b)} 支樁")
+
 
 if not df_history.empty:
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
     st.sidebar.text_input("右側主標題", key="pdf_loc_note_right")
     st.sidebar.text_input("左側副標題", key="pdf_loc_note_left")
-    # 【更新】：加入 step=1 強制整數輸入
     st.sidebar.number_input("本週預計完成 (支)", key="pdf_week_est", step=1)
     
     st.sidebar.markdown("### 🎛️ PDF 圖表幾何微調")
