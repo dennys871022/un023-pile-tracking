@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V53", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (雙重擷取精準版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V54", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (雙重擷取與防呆機制版)")
 
 # 初始化 Session State
 if 'sel_a' not in st.session_state:
@@ -227,6 +227,27 @@ def save_data(piles):
             new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
     if new_d: sh_main.append_rows(new_d); st.rerun()
 
+# --- 【核心新增】防呆檢測與登錄分流邏輯 ---
+def process_and_save(plist):
+    if not plist:
+        return
+    
+    # 確保格式乾淨且無內部重複
+    clean_plist = list(dict.fromkeys([p.upper().strip() for p in plist]))
+    
+    # 擷取資料庫中已存在的樁號
+    existing_piles = set(df_history['樁號'].values)
+    
+    # 找出重複的樁號
+    duplicates = [p for p in clean_plist if p in existing_piles]
+    
+    if duplicates:
+        dup_str = ", ".join(duplicates)
+        st.error(f"🛑 **登錄暫停！** 檢測到以下樁號已存在於資料庫中：【 **{dup_str}** 】\n\n為避免資料異常，已暫停本次寫入，請修改確認後再重新登錄。")
+    else:
+        # 如果無重複，則正常寫入資料庫
+        save_data(clean_plist)
+
 t1, t2 = st.tabs(["🎯 推算", "✏️ 手動"])
 with t1:
     with st.form("a"):
@@ -237,7 +258,7 @@ with t1:
             for _ in range(int(ct)):
                 if 1 <= cur <= 613: plist.append(f"P{cur}")
                 cur = cur + step if dr == "遞增" else cur - step
-            save_data(plist)
+            process_and_save(plist) # 取代原有的 save_data
 with t2:
     with st.form("m"):
         raw = st.text_input("區間 (1-50)"); 
@@ -250,7 +271,7 @@ with t2:
                         s_idx, e_idx = map(int, pt.split('-')); rs = step if s_idx <= e_idx else -step
                         for n in range(s_idx, e_idx + (1 if s_idx <= e_idx else -1), rs): plist.append(f"P{n}")
                     elif pt.isdigit(): plist.append(f"P{pt}")
-            save_data(plist)
+            process_and_save(plist) # 取代原有的 save_data
 
 st.markdown("---")
 fig_web = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成': '#696969', '[已完成]': '#FFB6C1'}, custom_data=['樁號'])
@@ -269,7 +290,6 @@ if selected_piles:
 else:
     st.caption("💡 提示：請在地圖上方拉框選取，或直接使用下方文字輸入範圍。")
 
-# --- 解析手動輸入字串轉換為樁號清單 ---
 def parse_range_to_piles(raw_str):
     plist = []
     if raw_str:
@@ -282,7 +302,7 @@ def parse_range_to_piles(raw_str):
                     for n in range(s_idx, e_idx + rs, rs): plist.append(f"P{n}")
                 except: pass
             elif pt.isdigit(): plist.append(f"P{pt}")
-    return list(dict.fromkeys(plist)) # 去除重複並保留順序
+    return list(dict.fromkeys(plist)) 
 
 st.markdown("#### ⚙️ 分配 PDF 局部截圖範圍")
 c_btn1, c_btn2, c_btn3 = st.columns([1.5, 2, 1])
