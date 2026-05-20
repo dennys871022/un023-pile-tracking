@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V54", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (雙重擷取與防呆機制版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V55", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (圖例全局鎖定修復版)")
 
 # 初始化 Session State
 if 'sel_a' not in st.session_state:
@@ -227,25 +227,16 @@ def save_data(piles):
             new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
     if new_d: sh_main.append_rows(new_d); st.rerun()
 
-# --- 【核心新增】防呆檢測與登錄分流邏輯 ---
 def process_and_save(plist):
-    if not plist:
-        return
-    
-    # 確保格式乾淨且無內部重複
+    if not plist: return
     clean_plist = list(dict.fromkeys([p.upper().strip() for p in plist]))
-    
-    # 擷取資料庫中已存在的樁號
     existing_piles = set(df_history['樁號'].values)
-    
-    # 找出重複的樁號
     duplicates = [p for p in clean_plist if p in existing_piles]
     
     if duplicates:
         dup_str = ", ".join(duplicates)
         st.error(f"🛑 **登錄暫停！** 檢測到以下樁號已存在於資料庫中：【 **{dup_str}** 】\n\n為避免資料異常，已暫停本次寫入，請修改確認後再重新登錄。")
     else:
-        # 如果無重複，則正常寫入資料庫
         save_data(clean_plist)
 
 t1, t2 = st.tabs(["🎯 推算", "✏️ 手動"])
@@ -258,7 +249,7 @@ with t1:
             for _ in range(int(ct)):
                 if 1 <= cur <= 613: plist.append(f"P{cur}")
                 cur = cur + step if dr == "遞增" else cur - step
-            process_and_save(plist) # 取代原有的 save_data
+            process_and_save(plist)
 with t2:
     with st.form("m"):
         raw = st.text_input("區間 (1-50)"); 
@@ -271,7 +262,7 @@ with t2:
                         s_idx, e_idx = map(int, pt.split('-')); rs = step if s_idx <= e_idx else -step
                         for n in range(s_idx, e_idx + (1 if s_idx <= e_idx else -1), rs): plist.append(f"P{n}")
                     elif pt.isdigit(): plist.append(f"P{pt}")
-            process_and_save(plist) # 取代原有的 save_data
+            process_and_save(plist)
 
 st.markdown("---")
 fig_web = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成': '#696969', '[已完成]': '#FFB6C1'}, custom_data=['樁號'])
@@ -379,27 +370,56 @@ if not df_history.empty:
         save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
     if MATPLOTLIB_READY:
-        def draw_pdf_axis(ax, target_df, scale_factor=1.0, is_main=False):
-            if target_df.empty: ax.axis('off'); return
-            states = ['未完成', '[已完成]'] + sorted([s for s in target_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
-            colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}; color_idx = 0; pal = px.colors.qualitative.Plotly
+        # 【更新】：傳入 global_df(全區資料df_p) 強制鎖定圖例，確保不因局部截圖缺失當日進度而漏掉圖例
+        def draw_pdf_axis(ax, target_df, global_df, scale_factor=1.0, is_main=False):
+            if target_df.empty: 
+                ax.axis('off')
+                return
+            
+            # 從全區資料取得所有曾發生過的狀態(日期)
+            states = ['未完成', '[已完成]'] + sorted([s for s in global_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
+            colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}
+            pal = px.colors.qualitative.Plotly
+            color_idx = 0
+            
+            # 預先配發顏色給所有狀態，保證 A/B 機顏色絕對一致
+            for s_glob in states:
+                if s_glob not in colors:
+                    colors[s_glob] = pal[color_idx % len(pal)]
+                    color_idx += 1
+            
+            msize = marker_size * scale_factor
+            fsize = lbl_fontsize * scale_factor
+            offset = text_offset * scale_factor
+            
             for state in states:
                 sub = target_df[target_df['狀態'] == state]
-                if sub.empty: continue
-                c = colors.get(state, pal[color_idx % len(pal)]); 
-                if state not in colors: color_idx += 1
-                if state == '未完成': ax.scatter(sub['X'], sub['Y'], facecolors='none', edgecolors=c, s=marker_size*scale_factor, lw=1.5, zorder=2)
+                c = colors[state]
+                
+                if state == '未完成':
+                    legend_label = "未完成" if is_main else None
+                    if not sub.empty:
+                        ax.scatter(sub['X'], sub['Y'], facecolors='none', edgecolors=c, s=msize, lw=1.5, zorder=2, label=legend_label)
+                    elif is_main:
+                        # 繪製一個隱形點強迫圖例顯示
+                        ax.scatter([], [], facecolors='none', edgecolors=c, s=msize, lw=1.5, zorder=2, label=legend_label)
                 else:
-                    ax.scatter(sub['X'], sub['Y'], color=c, s=marker_size*scale_factor, zorder=3, label=f"{state} 樁號 ○ 施作順序" if is_main else None)
-                    if state == today_state_key:
-                        for _, row in sub.iterrows():
-                            is_h = row['is_horizontal']; p = row['樁號']; s_txt = row['純順序']; off = text_offset*scale_factor; fs = lbl_fontsize*scale_factor
-                            if is_h: 
-                                ax.annotate(p, (row['X'], row['Y']), xytext=(0, off), textcoords='offset points', fontsize=fs, fontweight='bold', ha='center', va='bottom', zorder=4)
-                                if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(0, -off), textcoords='offset points', fontsize=fs, color=c, ha='center', va='top', zorder=4)
-                            else:
-                                ax.annotate(p, (row['X'], row['Y']), xytext=(-off, 0), textcoords='offset points', fontsize=fs, fontweight='bold', ha='right', va='center', zorder=4)
-                                if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(off, 0), textcoords='offset points', fontsize=fs, color=c, ha='left', va='center', zorder=4)
+                    legend_label = f"{state} 樁號 ○ 施作順序" if is_main else None
+                    if not sub.empty:
+                        ax.scatter(sub['X'], sub['Y'], color=c, s=msize, zorder=3, label=legend_label)
+                        if state == today_state_key:
+                            for _, row in sub.iterrows():
+                                is_h = row['is_horizontal']; p = row['樁號']; s_txt = row['純順序']
+                                if is_h: 
+                                    ax.annotate(p, (row['X'], row['Y']), xytext=(0, offset), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='center', va='bottom', zorder=4)
+                                    if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(0, -offset), textcoords='offset points', fontsize=fsize, color=c, ha='center', va='top', zorder=4)
+                                else:
+                                    ax.annotate(p, (row['X'], row['Y']), xytext=(-off, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='right', va='center', zorder=4)
+                                    if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fsize, color=c, ha='left', va='center', zorder=4)
+                    elif is_main:
+                        # 繪製一個隱形點強迫圖例顯示當天日期顏色
+                        ax.scatter([], [], color=c, s=msize, zorder=3, label=legend_label)
+                        
             ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
 
         def create_pdf_figure():
@@ -409,21 +429,29 @@ if not df_history.empty:
             has_a, has_b = bool(st.session_state.sel_a), bool(st.session_state.sel_b)
             
             if not (has_a or has_b):
-                ax = fig.add_axes([0.45, 0.1, 0.5, 0.75]); draw_pdf_axis(ax, df_p, 1.0, True)
+                ax = fig.add_axes([0.45, 0.1, 0.5, 0.75])
+                draw_pdf_axis(ax, df_p, df_p, 1.0, True)  # 傳入 global_df
                 ax.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
             else:
-                if has_a:
+                if has_a and has_b:
                     ax_a = fig.add_axes([pos_img_a_x, pos_img_a_y, pos_img_a_w, 0.75])
-                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], 1.0, True)
+                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], df_p, 1.0, True)
                     ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
                     ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
-                if has_b:
+                    
                     ax_b = fig.add_axes([pos_img_b_x, pos_img_b_y, pos_img_b_w, 0.75])
-                    is_main_b = not has_a
-                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], 1.0, is_main_b)
+                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], df_p, 1.0, False)
                     ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
-                    if is_main_b:
-                        ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
+                elif has_a:
+                    ax_a = fig.add_axes([pos_img_a_x, pos_img_a_y, pos_img_a_w, 0.75])
+                    draw_pdf_axis(ax_a, df_p[df_p['樁號'].isin(st.session_state.sel_a)], df_p, 1.0, True)
+                    ax_a.set_title("A機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    ax_a.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
+                elif has_b:
+                    ax_b = fig.add_axes([pos_img_b_x, pos_img_b_y, pos_img_b_w, 0.75])
+                    draw_pdf_axis(ax_b, df_p[df_p['樁號'].isin(st.session_state.sel_b)], df_p, 1.0, True)
+                    ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
+                    ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
 
             roc_y = datetime.date.today().year - 1911; today_roc = f"{roc_y}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
             
