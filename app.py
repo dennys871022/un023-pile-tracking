@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V55", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (圖例全局鎖定修復版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V56", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (完美穩定最終版)")
 
 # 初始化 Session State
 if 'sel_a' not in st.session_state:
@@ -370,19 +370,16 @@ if not df_history.empty:
         save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
     if MATPLOTLIB_READY:
-        # 【更新】：傳入 global_df(全區資料df_p) 強制鎖定圖例，確保不因局部截圖缺失當日進度而漏掉圖例
         def draw_pdf_axis(ax, target_df, global_df, scale_factor=1.0, is_main=False):
             if target_df.empty: 
                 ax.axis('off')
                 return
             
-            # 從全區資料取得所有曾發生過的狀態(日期)
             states = ['未完成', '[已完成]'] + sorted([s for s in global_df['狀態'].unique() if s not in ['未完成', '[已完成]']])
             colors = {'未完成': '#808080', '[已完成]': '#FFB6C1'}
             pal = px.colors.qualitative.Plotly
             color_idx = 0
             
-            # 預先配發顏色給所有狀態，保證 A/B 機顏色絕對一致
             for s_glob in states:
                 if s_glob not in colors:
                     colors[s_glob] = pal[color_idx % len(pal)]
@@ -401,7 +398,6 @@ if not df_history.empty:
                     if not sub.empty:
                         ax.scatter(sub['X'], sub['Y'], facecolors='none', edgecolors=c, s=msize, lw=1.5, zorder=2, label=legend_label)
                     elif is_main:
-                        # 繪製一個隱形點強迫圖例顯示
                         ax.scatter([], [], facecolors='none', edgecolors=c, s=msize, lw=1.5, zorder=2, label=legend_label)
                 else:
                     legend_label = f"{state} 樁號 ○ 施作順序" if is_main else None
@@ -414,10 +410,10 @@ if not df_history.empty:
                                     ax.annotate(p, (row['X'], row['Y']), xytext=(0, offset), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='center', va='bottom', zorder=4)
                                     if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(0, -offset), textcoords='offset points', fontsize=fsize, color=c, ha='center', va='top', zorder=4)
                                 else:
-                                    ax.annotate(p, (row['X'], row['Y']), xytext=(-off, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='right', va='center', zorder=4)
+                                    # 【修正點】：將原本殘留的 -off 改為 -offset
+                                    ax.annotate(p, (row['X'], row['Y']), xytext=(-offset, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='right', va='center', zorder=4)
                                     if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fsize, color=c, ha='left', va='center', zorder=4)
                     elif is_main:
-                        # 繪製一個隱形點強迫圖例顯示當天日期顏色
                         ax.scatter([], [], color=c, s=msize, zorder=3, label=legend_label)
                         
             ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
@@ -430,7 +426,7 @@ if not df_history.empty:
             
             if not (has_a or has_b):
                 ax = fig.add_axes([0.45, 0.1, 0.5, 0.75])
-                draw_pdf_axis(ax, df_p, df_p, 1.0, True)  # 傳入 global_df
+                draw_pdf_axis(ax, df_p, df_p, 1.0, True) 
                 ax.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28 * fig_scale, markerscale=1.5)
             else:
                 if has_a and has_b:
