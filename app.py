@@ -15,10 +15,9 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V56", layout="wide")
-st.title("🏗️ UN023 排樁進度管理 (完美穩定最終版)")
+st.set_page_config(page_title="UN023 排樁進度系統 V57", layout="wide")
+st.title("🏗️ UN023 排樁進度管理 (備份功能修復版)")
 
-# 初始化 Session State
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
 if 'sel_b' not in st.session_state:
@@ -369,6 +368,25 @@ if not df_history.empty:
         }
         save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
+    # 【新增功能】：Excel 備份還原上傳區
+    st.sidebar.markdown("### 📤 備份還原區")
+    excel_backup = st.sidebar.file_uploader("上傳 Excel 備份檔以覆蓋雲端", type=["xlsx"])
+    if excel_backup is not None:
+        try:
+            df_bk = pd.read_excel(excel_backup, sheet_name='施工明細')
+            if st.sidebar.button("⚠️ 確認覆蓋雲端資料庫", type="secondary"):
+                if sh_main is not None:
+                    sh_main.clear()
+                    df_bk = df_bk.fillna("")
+                    rows_to_upload = [df_bk.columns.tolist()] + df_bk.values.tolist()
+                    sh_main.append_rows(rows_to_upload)
+                    st.sidebar.success("✅ 雲端資料庫已成功還原！")
+                    st.rerun()
+                else:
+                    st.sidebar.error("無法連線至雲端資料庫")
+        except Exception as bk_e:
+            st.sidebar.error(f"備份檔讀取失敗: {bk_e}")
+
     if MATPLOTLIB_READY:
         def draw_pdf_axis(ax, target_df, global_df, scale_factor=1.0, is_main=False):
             if target_df.empty: 
@@ -410,7 +428,6 @@ if not df_history.empty:
                                     ax.annotate(p, (row['X'], row['Y']), xytext=(0, offset), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='center', va='bottom', zorder=4)
                                     if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(0, -offset), textcoords='offset points', fontsize=fsize, color=c, ha='center', va='top', zorder=4)
                                 else:
-                                    # 【修正點】：將原本殘留的 -off 改為 -offset
                                     ax.annotate(p, (row['X'], row['Y']), xytext=(-offset, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='right', va='center', zorder=4)
                                     if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fsize, color=c, ha='left', va='center', zorder=4)
                     elif is_main:
@@ -419,7 +436,7 @@ if not df_history.empty:
             ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
 
         def create_pdf_figure():
-            font_name = setup_chinese_font(); 
+            font_name = setup_chinese_font()
             if font_name: plt.rcParams['font.family'] = font_name
             fig = plt.figure(figsize=(24 * fig_scale, 16 * fig_scale))
             has_a, has_b = bool(st.session_state.sel_a), bool(st.session_state.sel_b)
@@ -477,7 +494,10 @@ if not df_history.empty:
 
         pdf_fig = create_pdf_figure(); st.markdown("---"); st.pyplot(pdf_fig)
         buf = io.BytesIO(); pdf_fig.savefig(buf, format='pdf', bbox_inches='tight'); plt.close(pdf_fig)
-        st.sidebar.download_button("🔴 匯出 PDF 報表", buf.getvalue(), f"Plan_{datetime.date.today()}.pdf", type="primary")
+        st.sidebar.markdown("### 📥 下載區")
+        has_local_download = bool(st.session_state.sel_a) or bool(st.session_state.sel_b)
+        pdf_btn_text = "🔴 匯出 PDF 報表 (局部圖)" if has_local_download else "🔴 匯出 PDF 報表 (全區圖)"
+        st.sidebar.download_button(pdf_btn_text, buf.getvalue(), f"Plan_{datetime.date.today()}.pdf", type="primary")
 
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
