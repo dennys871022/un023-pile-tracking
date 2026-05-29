@@ -15,7 +15,7 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統 V57", layout="wide")
+st.set_page_config(page_title="CDC結構預壘樁進度管理", layout="wide")
 st.title("🏗️ CDC結構預壘樁進度管理 ")
 
 if 'sel_a' not in st.session_state:
