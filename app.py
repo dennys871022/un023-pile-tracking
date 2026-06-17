@@ -16,7 +16,7 @@ except ImportError:
     MATPLOTLIB_READY = False
 
 st.set_page_config(page_title="CDC結構預壘樁進度管理", layout="wide")
-st.title("🏗️ CDC結構預壘樁進度管理 ")
+st.title("🏗️ CDC結構預壘樁進度管理")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
@@ -258,8 +258,13 @@ with t2:
                 pts = re.split(r'[,\s]+', re.sub(r'[pP]', '', raw))
                 for pt in pts:
                     if '-' in pt:
-                        s_idx, e_idx = map(int, pt.split('-')); rs = step if s_idx <= e_idx else -step
-                        for n in range(s_idx, e_idx + (1 if s_idx <= e_idx else -1), rs): plist.append(f"P{n}")
+                        s_idx, e_idx = map(int, pt.split('-'))
+                        # 轉角跨越邏輯應用於手動輸入配合跳號
+                        if s_idx <= e_idx:
+                            seq_list = list(range(s_idx, e_idx + 1))
+                        else:
+                            seq_list = list(range(s_idx, 613 + 1)) + list(range(1, e_idx + 1))
+                        for n in seq_list[::step]: plist.append(f"P{n}")
                     elif pt.isdigit(): plist.append(f"P{pt}")
             process_and_save(plist)
 
@@ -288,8 +293,12 @@ def parse_range_to_piles(raw_str):
             if '-' in pt:
                 try:
                     s_idx, e_idx = map(int, pt.split('-'))
-                    rs = 1 if s_idx <= e_idx else -1
-                    for n in range(s_idx, e_idx + rs, rs): plist.append(f"P{n}")
+                    # 轉角跨越邏輯：若起點大於終點，自動從起點到613，再接1到終點
+                    if s_idx <= e_idx:
+                        for n in range(s_idx, e_idx + 1): plist.append(f"P{n}")
+                    else:
+                        for n in range(s_idx, 613 + 1): plist.append(f"P{n}")
+                        for n in range(1, e_idx + 1): plist.append(f"P{n}")
                 except: pass
             elif pt.isdigit(): plist.append(f"P{pt}")
     return list(dict.fromkeys(plist)) 
@@ -305,7 +314,7 @@ with c_btn1:
 
 with c_btn2:
     st.markdown("**👉 方式二：將【文字輸入】的範圍分配給**")
-    manual_raw = st.text_input("輸入樁號區間 (如: 175-210, 301)", label_visibility="collapsed")
+    manual_raw = st.text_input("輸入樁號區間 (如: 605-15, 301)", label_visibility="collapsed")
     cb3, cb4 = st.columns(2)
     if cb3.button("📌 A機 (輸入)"): st.session_state.sel_a = parse_range_to_piles(manual_raw); st.rerun()
     if cb4.button("📌 B機 (輸入)"): st.session_state.sel_b = parse_range_to_piles(manual_raw); st.rerun()
@@ -368,7 +377,6 @@ if not df_history.empty:
         }
         save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
-    # 【新增功能】：Excel 備份還原上傳區
     st.sidebar.markdown("### 📤 備份還原區")
     excel_backup = st.sidebar.file_uploader("上傳 Excel 備份檔以覆蓋雲端", type=["xlsx"])
     if excel_backup is not None:
@@ -482,7 +490,7 @@ if not df_history.empty:
                 f"本週累積 A機:{this_week_done_a}支 B機:{this_week_done_b}支",
                 f"本日完成 A機:{today_done_auto_a}支 B機:{today_done_auto_b}支",
                 f"選取區 A機:{local_a_done}/{local_a_total}{a_pct_str}",
-                f"　　　 B機:{local_b_done}/{local_b_total}{b_pct_str}",
+                f"    B機:{local_b_done}/{local_b_total}{b_pct_str}",
                 f"總累積完成 {total_done_auto} 支 ({total_done_auto}/613, {total_perc:.2f}%)",
                 f"各別累積 A機:{cum_done_a}支 B機:{cum_done_b}支"
             ]
