@@ -211,7 +211,8 @@ local_b_done, local_b_total = get_local_stats(st.session_state.sel_b, df_p)
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
 work_date = c1.date_input("日期"); machine = c2.radio("機台", ["A車", "B車"], horizontal=True)
-mode = c3.radio("模式", ["4支一循環", "2支一循環"], horizontal=True); step = 4 if "4支" in mode else 2
+mode = c3.radio("模式", ["4支一循環", "2支一循環", "連續施作"], horizontal=True)
+step = 4 if "4支" in mode else (2 if "2支" in mode else 1)
 
 def save_data(piles):
     if not piles or sh_main is None: return
@@ -259,11 +260,11 @@ with t2:
                 for pt in pts:
                     if '-' in pt:
                         s_idx, e_idx = map(int, pt.split('-'))
-                        # 轉角跨越邏輯應用於手動輸入配合跳號
                         if s_idx <= e_idx:
                             seq_list = list(range(s_idx, e_idx + 1))
                         else:
-                            seq_list = list(range(s_idx, 613 + 1)) + list(range(1, e_idx + 1))
+                            wrap_max = 499 if (s_idx <= 499 and e_idx <= 499) else 613
+                            seq_list = list(range(s_idx, wrap_max + 1)) + list(range(1, e_idx + 1))
                         for n in seq_list[::step]: plist.append(f"P{n}")
                     elif pt.isdigit(): plist.append(f"P{pt}")
             process_and_save(plist)
@@ -293,11 +294,11 @@ def parse_range_to_piles(raw_str):
             if '-' in pt:
                 try:
                     s_idx, e_idx = map(int, pt.split('-'))
-                    # 轉角跨越邏輯：若起點大於終點，自動從起點到613，再接1到終點
                     if s_idx <= e_idx:
                         for n in range(s_idx, e_idx + 1): plist.append(f"P{n}")
                     else:
-                        for n in range(s_idx, 613 + 1): plist.append(f"P{n}")
+                        wrap_max = 499 if (s_idx <= 499 and e_idx <= 499) else 613
+                        for n in range(s_idx, wrap_max + 1): plist.append(f"P{n}")
                         for n in range(1, e_idx + 1): plist.append(f"P{n}")
                 except: pass
             elif pt.isdigit(): plist.append(f"P{pt}")
@@ -314,7 +315,7 @@ with c_btn1:
 
 with c_btn2:
     st.markdown("**👉 方式二：將【文字輸入】的範圍分配給**")
-    manual_raw = st.text_input("輸入樁號區間 (如: 605-15, 301)", label_visibility="collapsed")
+    manual_raw = st.text_input("輸入樁號區間 (如: 471-29, 605-15, 301)", label_visibility="collapsed")
     cb3, cb4 = st.columns(2)
     if cb3.button("📌 A機 (輸入)"): st.session_state.sel_a = parse_range_to_piles(manual_raw); st.rerun()
     if cb4.button("📌 B機 (輸入)"): st.session_state.sel_b = parse_range_to_piles(manual_raw); st.rerun()
