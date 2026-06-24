@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="CDC結構預壘樁進度管理", layout="wide")
-st.title("🏗️ CDC結構預壘樁進度管理")
+st.set_page_config(page_title="UN023 排樁進度系統", layout="wide")
+st.title("🏗️ UN023 排樁進度管理")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
@@ -351,7 +351,6 @@ with c_btn3:
 
 st.info(f"當前 PDF 暫存狀態：A機截圖區包含 {len(st.session_state.sel_a)} 支樁 | B機截圖區包含 {len(st.session_state.sel_b)} 支樁")
 
-
 if not df_history.empty:
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
     st.sidebar.text_input("右側主標題", key="pdf_loc_note_right")
@@ -470,7 +469,7 @@ if not df_history.empty:
                 else:
                     legend_label = f"{state} 樁號 ○ 施作順序" if is_main else None
                     if not sub.empty:
-                        ax.scatter(sub['X'], sub['Y'], color=c, msize=msize, zorder=3, label=legend_label)
+                        ax.scatter(sub['X'], sub['Y'], color=c, s=msize, zorder=3, label=legend_label)
                         if state == today_state_key:
                             for _, row in sub.iterrows():
                                 is_h = row['is_horizontal']; p = row['樁號']; s_txt = row['純順序']
