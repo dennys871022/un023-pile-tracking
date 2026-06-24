@@ -23,6 +23,9 @@ if 'sel_a' not in st.session_state:
 if 'sel_b' not in st.session_state:
     st.session_state.sel_b = []
 
+st.sidebar.markdown("### 🔒 系統權限")
+demo_mode = st.sidebar.checkbox("👀 開啟訪客展示模式 (唯讀)", value=False)
+
 @st.cache_resource
 def setup_chinese_font():
     import os
@@ -225,7 +228,11 @@ def save_data(piles):
             seq += 1; b = df_base[df_base['樁號'] == p]
             x, y = (b['X'].iloc[0], b['Y'].iloc[0]) if not b.empty else (0, 0)
             new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
-    if new_d: sh_main.append_rows(new_d); st.rerun()
+    if new_d:
+        if demo_mode:
+            st.toast("👀 唯讀模式：模擬登錄成功，雲端資料庫未變動。")
+        else:
+            sh_main.append_rows(new_d); st.rerun()
 
 def process_and_save(plist):
     if not plist: return
@@ -365,18 +372,21 @@ if not df_history.empty:
         st.form_submit_button("🔄 套用排版與圖位設定")
 
     if st.sidebar.button("💾 記憶當前排版與標題 (永久儲存)"):
-        new_s = {
-            "pdf_loc_note_right": st.session_state.pdf_loc_note_right, 
-            "pdf_loc_note_left": st.session_state.pdf_loc_note_left,
-            "pdf_week_est": st.session_state.pdf_week_est,
-            "fig_scale": fig_scale, "marker_size": marker_size, "lbl_fontsize": lbl_fontsize, "text_offset": text_offset, 
-            "pos_title_y": pos_title_y, "pos_info_x": pos_info_x, "pos_info_y": pos_info_y, 
-            "pos_loc_x": pos_loc_x, "pos_loc_y": pos_loc_y, "pos_loc_x_left": pos_loc_x_left, "pos_loc_y_left": pos_loc_y_left, 
-            "pos_leg_x": pos_leg_x, "pos_leg_y": pos_leg_y,
-            "pos_img_a_x": pos_img_a_x, "pos_img_a_y": pos_img_a_y, "pos_img_a_w": pos_img_a_w,
-            "pos_img_b_x": pos_img_b_x, "pos_img_b_y": pos_img_b_y, "pos_img_b_w": pos_img_b_w
-        }
-        save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
+        if demo_mode:
+            st.sidebar.warning("👀 唯讀模式：攔截設定儲存動作。")
+        else:
+            new_s = {
+                "pdf_loc_note_right": st.session_state.pdf_loc_note_right, 
+                "pdf_loc_note_left": st.session_state.pdf_loc_note_left,
+                "pdf_week_est": st.session_state.pdf_week_est,
+                "fig_scale": fig_scale, "marker_size": marker_size, "lbl_fontsize": lbl_fontsize, "text_offset": text_offset, 
+                "pos_title_y": pos_title_y, "pos_info_x": pos_info_x, "pos_info_y": pos_info_y, 
+                "pos_loc_x": pos_loc_x, "pos_loc_y": pos_loc_y, "pos_loc_x_left": pos_loc_x_left, "pos_loc_y_left": pos_loc_y_left, 
+                "pos_leg_x": pos_leg_x, "pos_leg_y": pos_leg_y,
+                "pos_img_a_x": pos_img_a_x, "pos_img_a_y": pos_img_a_y, "pos_img_a_w": pos_img_a_w,
+                "pos_img_b_x": pos_img_b_x, "pos_img_b_y": pos_img_b_y, "pos_img_b_w": pos_img_b_w
+            }
+            save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
     st.sidebar.markdown("### 📤 備份還原區")
     excel_backup = st.sidebar.file_uploader("上傳 Excel 備份檔以覆蓋雲端", type=["xlsx"])
@@ -384,7 +394,9 @@ if not df_history.empty:
         try:
             df_bk = pd.read_excel(excel_backup, sheet_name='施工明細')
             if st.sidebar.button("⚠️ 確認覆蓋雲端資料庫", type="secondary"):
-                if sh_main is not None:
+                if demo_mode:
+                    st.sidebar.warning("👀 唯讀模式：攔截資料庫覆蓋動作。")
+                elif sh_main is not None:
                     sh_main.clear()
                     df_bk = df_bk.fillna("")
                     rows_to_upload = [df_bk.columns.tolist()] + df_bk.values.tolist()
