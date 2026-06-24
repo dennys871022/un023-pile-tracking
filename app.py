@@ -24,7 +24,7 @@ if 'sel_b' not in st.session_state:
     st.session_state.sel_b = []
 
 st.sidebar.markdown("### 🔒 系統權限")
-demo_mode = st.sidebar.checkbox("👀 開啟訪客展示模式 (唯讀)", value=False)
+demo_mode = st.sidebar.checkbox("👀 開啟訪客展示模式 (沙盒試用)", value=False)
 
 @st.cache_resource
 def setup_chinese_font():
@@ -143,7 +143,12 @@ if "pdf_loc_note_left" not in st.session_state:
 if "pdf_week_est" not in st.session_state:
     st.session_state["pdf_week_est"] = int(s.get('pdf_week_est', 36))
 
-df_history = fetch_current_data(sh_main)
+# 沙盒相容歷史數據加載邏輯
+df_history_cloud = fetch_current_data(sh_main)
+if 'df_history_local' not in st.session_state or not demo_mode:
+    st.session_state.df_history_local = df_history_cloud.copy()
+
+df_history = st.session_state.df_history_local if demo_mode else df_history_cloud
 
 total_done_auto = len(df_history)
 total_perc = (total_done_auto / 613) * 100 if 613 > 0 else 0
@@ -218,7 +223,7 @@ mode = c3.radio("模式", ["4支一循環", "2支一循環", "連續施作"], ho
 step = 4 if "4支" in mode else (2 if "2支" in mode else 1)
 
 def save_data(piles):
-    if not piles or sh_main is None: return
+    if not piles: return
     m_data = df_history[df_history['機台'] == machine]
     seq = 0 if m_data.empty else pd.to_numeric(m_data['施作順序'], errors='coerce').max()
     new_d = []
@@ -230,9 +235,14 @@ def save_data(piles):
             new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
     if new_d:
         if demo_mode:
-            st.toast("👀 唯讀模式：模擬登錄成功，雲端資料庫未變動。")
+            new_df = pd.DataFrame(new_d, columns=['樁號', '施工日期', '機台', '施作順序', 'X', 'Y'])
+            st.session_state.df_history_local = pd.concat([st.session_state.df_history_local, new_df], ignore_index=True)
+            st.toast("👀 沙盒試用：已模擬寫入網頁暫存變數，後台無變動。")
+            st.rerun()
         else:
-            sh_main.append_rows(new_d); st.rerun()
+            if sh_main is not None:
+                sh_main.append_rows(new_d)
+                st.rerun()
 
 def process_and_save(plist):
     if not plist: return
@@ -276,7 +286,7 @@ with t2:
                     elif pt.isdigit(): plist.append(f"P{pt}")
             process_and_save(plist)
 
-st.markdown("---")
+st.divider()
 fig_web = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成': '#696969', '[已完成]': '#FFB6C1'}, custom_data=['樁號'])
 fig_web.update_traces(selector=dict(name='未完成'), marker=dict(symbol='circle-open', size=16, line=dict(width=2, color='#A9A9A9')), textposition='top right')
 fig_web.update_traces(selector=lambda t: t.name != '未完成', marker=dict(symbol='circle', size=16, line=dict(width=1, color='white')), textposition='top right')
@@ -373,7 +383,18 @@ if not df_history.empty:
 
     if st.sidebar.button("💾 記憶當前排版與標題 (永久儲存)"):
         if demo_mode:
-            st.sidebar.warning("👀 唯讀模式：攔截設定儲存動作。")
+            st.sidebar.warning("👀 沙盒試用：設定僅變更於當前瀏覽器，未寫入雲端檔案。")
+            s.update({
+                "pdf_loc_note_right": st.session_state.pdf_loc_note_right,
+                "pdf_loc_note_left": st.session_state.pdf_loc_note_left,
+                "pdf_week_est": st.session_state.pdf_week_est,
+                "fig_scale": fig_scale, "marker_size": marker_size, "lbl_fontsize": lbl_fontsize, "text_offset": text_offset,
+                "pos_title_y": pos_title_y, "pos_info_x": pos_info_x, "pos_info_y": pos_info_y,
+                "pos_loc_x": pos_loc_x, "pos_loc_y": pos_loc_y, "pos_loc_x_left": pos_loc_x_left, "pos_loc_y_left": pos_loc_y_left,
+                "pos_leg_x": pos_leg_x, "pos_leg_y": pos_leg_y,
+                "pos_img_a_x": pos_img_a_x, "pos_img_a_y": pos_img_a_y, "pos_img_a_w": pos_img_a_w,
+                "pos_img_b_x": pos_img_b_x, "pos_img_b_y": pos_img_b_y, "pos_img_b_w": pos_img_b_w
+            })
         else:
             new_s = {
                 "pdf_loc_note_right": st.session_state.pdf_loc_note_right, 
@@ -395,7 +416,7 @@ if not df_history.empty:
             df_bk = pd.read_excel(excel_backup, sheet_name='施工明細')
             if st.sidebar.button("⚠️ 確認覆蓋雲端資料庫", type="secondary"):
                 if demo_mode:
-                    st.sidebar.warning("👀 唯讀模式：攔截資料庫覆蓋動作。")
+                    st.sidebar.warning("👀 沙盒試用：已攔截覆蓋檔案動作。")
                 elif sh_main is not None:
                     sh_main.clear()
                     df_bk = df_bk.fillna("")
@@ -452,7 +473,7 @@ if not df_history.empty:
                                     ax.annotate(p, (row['X'], row['Y']), xytext=(-offset, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='right', va='center', zorder=4)
                                     if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fsize, color=c, ha='left', va='center', zorder=4)
                     elif is_main:
-                        ax.scatter([], [], color=c, s=msize, zorder=3, label=legend_label)
+                        ax.scatter([], [], color=c, msize=msize, zorder=3, label=legend_label)
                         
             ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
 
@@ -499,7 +520,7 @@ if not df_history.empty:
             
             info_lines = [
                 f"本週預計完成 {st.session_state.pdf_week_est} 支",
-                f"{week_start_str}~{week_end_str}",
+                f"{week_start_str}至{week_end_str}",
                 f"本週累積 A機:{this_week_done_a}支 B機:{this_week_done_b}支",
                 f"本日完成 A機:{today_done_auto_a}支 B機:{today_done_auto_b}支",
                 f"選取區 A機:{local_a_done}/{local_a_total}{a_pct_str}",
@@ -513,7 +534,7 @@ if not df_history.empty:
             fig.text(pos_loc_x_left, pos_loc_y_left, st.session_state.pdf_loc_note_left, fontsize=55 * fig_scale, fontweight='bold', ha='center')
             return fig
 
-        pdf_fig = create_pdf_figure(); st.markdown("---"); st.pyplot(pdf_fig)
+        pdf_fig = create_pdf_figure(); st.divider(); st.pyplot(pdf_fig)
         buf = io.BytesIO(); pdf_fig.savefig(buf, format='pdf', bbox_inches='tight'); plt.close(pdf_fig)
         st.sidebar.markdown("### 📥 下載區")
         has_local_download = bool(st.session_state.sel_a) or bool(st.session_state.sel_b)
