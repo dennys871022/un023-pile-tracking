@@ -24,7 +24,16 @@ if 'sel_b' not in st.session_state:
     st.session_state.sel_b = []
 
 st.sidebar.markdown("### 🔒 系統權限")
-demo_mode = st.sidebar.checkbox("👀 開啟訪客展示模式 (沙盒試用)", value=False)
+pwd = st.sidebar.text_input("輸入管理員密碼解鎖編輯模式", type="password")
+if pwd == "34561297":
+    demo_mode = False
+    st.sidebar.success("🔓 已解鎖管理員模式")
+else:
+    demo_mode = True
+    if pwd:
+        st.sidebar.error("❌ 密碼錯誤")
+    else:
+        st.sidebar.caption("👀 目前為訪客模式 (唯讀沙盒)")
 
 @st.cache_resource
 def setup_chinese_font():
@@ -143,7 +152,6 @@ if "pdf_loc_note_left" not in st.session_state:
 if "pdf_week_est" not in st.session_state:
     st.session_state["pdf_week_est"] = int(s.get('pdf_week_est', 36))
 
-# 沙盒相容歷史數據加載邏輯
 df_history_cloud = fetch_current_data(sh_main)
 if 'df_history_local' not in st.session_state or not demo_mode:
     st.session_state.df_history_local = df_history_cloud.copy()
@@ -462,7 +470,7 @@ if not df_history.empty:
                 else:
                     legend_label = f"{state} 樁號 ○ 施作順序" if is_main else None
                     if not sub.empty:
-                        ax.scatter(sub['X'], sub['Y'], color=c, s=msize, zorder=3, label=legend_label)
+                        ax.scatter(sub['X'], sub['Y'], color=c, msize=msize, zorder=3, label=legend_label)
                         if state == today_state_key:
                             for _, row in sub.iterrows():
                                 is_h = row['is_horizontal']; p = row['樁號']; s_txt = row['純順序']
@@ -473,7 +481,7 @@ if not df_history.empty:
                                     ax.annotate(p, (row['X'], row['Y']), xytext=(-offset, 0), textcoords='offset points', fontsize=fsize, fontweight='bold', ha='right', va='center', zorder=4)
                                     if s_txt: ax.annotate(s_txt, (row['X'], row['Y']), xytext=(offset, 0), textcoords='offset points', fontsize=fsize, color=c, ha='left', va='center', zorder=4)
                     elif is_main:
-                        ax.scatter([], [], color=c, msize=msize, zorder=3, label=legend_label)
+                        ax.scatter([], [], color=c, s=msize, zorder=3, label=legend_label)
                         
             ax.margins(0.1); ax.set_aspect('equal', adjustable='datalim'); ax.axis('off')
 
