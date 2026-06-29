@@ -16,7 +16,7 @@ except ImportError:
     MATPLOTLIB_READY = False
 
 st.set_page_config(page_title="CDC結構預壘樁進度管理", layout="wide")
-st.title("🏗️ CDC結構預壘樁進度管理")
+st.title("🏗️ CDC結構預壘樁進度管理 (時光機報表連動版)")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
@@ -156,73 +156,9 @@ df_history_cloud = fetch_current_data(sh_main)
 if 'df_history_local' not in st.session_state or not demo_mode:
     st.session_state.df_history_local = df_history_cloud.copy()
 
-df_history = st.session_state.df_history_local if demo_mode else df_history_cloud
-
-total_done_auto = len(df_history)
-total_perc = (total_done_auto / 613) * 100 if 613 > 0 else 0
-today_done_auto_a = 0
-today_done_auto_b = 0
-cum_done_a = 0
-cum_done_b = 0
-this_week_done_a = 0
-this_week_done_b = 0
-week_start_str = ""
-today_state_key = ""
-
-if not df_history.empty:
-    df_history['施工日期_DT'] = pd.to_datetime(df_history['施工日期'], errors='coerce')
-    latest_dt = df_history['施工日期_DT'].max()
-    today_data = df_history[df_history['施工日期_DT'] == latest_dt]
-    today_done_auto_a = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('A')])
-    today_done_auto_b = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('B')])
-    
-    cum_done_a = len(df_history[df_history['機台'].astype(str).str.upper().str.contains('A')])
-    cum_done_b = len(df_history[df_history['機台'].astype(str).str.upper().str.contains('B')])
-    
-    today_state_key = latest_dt.strftime('%m/%d')
-    monday = latest_dt - pd.Timedelta(days=latest_dt.weekday())
-    this_week_data = df_history[df_history['施工日期_DT'] >= monday]
-    
-    if not this_week_data.empty:
-        earliest_this_week = this_week_data['施工日期_DT'].min()
-        week_start_str = f"{earliest_this_week.year-1911}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
-        this_week_done_a = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('A')])
-        this_week_done_b = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('B')])
-    else:
-        week_start_str = f"{monday.year-1911}/{monday.month:02d}/{monday.day:02d}"
-
-def process_status_logic(df_hist, df_b):
-    plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy().sort_values('數字').reset_index(drop=True)
-    dx = plot_df['X'].diff().bfill(); dy = plot_df['Y'].diff().bfill()
-    dx_fwd = (plot_df['X'].shift(-1) - plot_df['X']).ffill(); dy_fwd = (plot_df['Y'].shift(-1) - plot_df['Y']).ffill()
-    plot_df['is_horizontal'] = (dx + dx_fwd).abs() >= (dy + dy_fwd).abs()
-    
-    if df_hist.empty:
-        plot_df['狀態'] = '未完成'; plot_df['標籤'] = plot_df['樁號']; plot_df['純順序'] = ""
-        return plot_df
-    
-    hist = df_hist.copy()
-    hist['標籤'] = hist.apply(lambda r: f"{r['樁號']}({str(r.get('機台','A'))[0]}{int(r.get('施作順序',0))})", axis=1)
-    hist['純順序'] = hist.apply(lambda r: f"({str(r.get('機台','A'))[0]}{int(r.get('施作順序',0))})", axis=1)
-    hist['施工日期_DT'] = pd.to_datetime(hist['施工日期'], errors='coerce')
-    max_date = hist['施工日期_DT'].max(); monday_dt = max_date - pd.Timedelta(days=max_date.weekday())
-    hist['狀態'] = hist['施工日期_DT'].apply(lambda dt: '未完成' if pd.isna(dt) else ('[已完成]' if dt < monday_dt else dt.strftime('%m/%d')))
-    
-    plot_df = plot_df.merge(hist[['樁號', '狀態', '標籤', '純順序']], on='樁號', how='left')
-    plot_df['狀態'] = plot_df['狀態'].fillna('未完成'); plot_df['標籤'] = plot_df['標籤'].fillna(plot_df['樁號']); plot_df['純順序'] = plot_df['純順序'].fillna("")
-    return plot_df
-
-df_p = process_status_logic(df_history, df_base)
-
-def get_local_stats(sel_list, p_df):
-    if not sel_list: return 0, 0
-    sub = p_df[p_df['樁號'].isin(sel_list)]
-    total = len(sub)
-    done = len(sub[sub['狀態'] != '未完成'])
-    return done, total
-
-local_a_done, local_a_total = get_local_stats(st.session_state.sel_a, df_p)
-local_b_done, local_b_total = get_local_stats(st.session_state.sel_b, df_p)
+df_history_full = st.session_state.df_history_local if demo_mode else df_history_cloud
+if not df_history_full.empty:
+    df_history_full['施工日期_DT'] = pd.to_datetime(df_history_full['施工日期'], errors='coerce')
 
 st.markdown("### 📝 進度登錄")
 c1, c2, c3 = st.columns([1, 1, 2])
@@ -232,12 +168,12 @@ step = 4 if "4支" in mode else (2 if "2支" in mode else 1)
 
 def save_data(piles):
     if not piles: return
-    m_data = df_history[df_history['機台'] == machine]
+    m_data = df_history_full[df_history_full['機台'] == machine]
     seq = 0 if m_data.empty else pd.to_numeric(m_data['施作順序'], errors='coerce').max()
     new_d = []
     for p in piles:
         p = p.upper().strip()
-        if p not in df_history['樁號'].values:
+        if p not in df_history_full['樁號'].values:
             seq += 1; b = df_base[df_base['樁號'] == p]
             x, y = (b['X'].iloc[0], b['Y'].iloc[0]) if not b.empty else (0, 0)
             new_d.append([p, str(work_date), machine, int(seq), float(x), float(y)])
@@ -255,7 +191,7 @@ def save_data(piles):
 def process_and_save(plist):
     if not plist: return
     clean_plist = list(dict.fromkeys([p.upper().strip() for p in plist]))
-    existing_piles = set(df_history['樁號'].values)
+    existing_piles = set(df_history_full['樁號'].values)
     duplicates = [p for p in clean_plist if p in existing_piles]
     
     if duplicates:
@@ -294,19 +230,94 @@ with t2:
                     elif pt.isdigit(): plist.append(f"P{pt}")
             process_and_save(plist)
 
-# 新增歷史日期查詢區塊
-st.markdown("### 🔍 歷史日期查詢")
-if not df_history.empty:
-    unique_dates = sorted(df_history['施工日期'].unique(), reverse=True)
-    selected_query_date = st.selectbox("選擇施工日期進行查詢", unique_dates, key="query_date_picker")
-    df_date_filtered = df_history[df_history['施工日期'] == selected_query_date]
-    if not df_date_filtered.empty:
-        st.dataframe(df_date_filtered[['樁號', '機台', '施作順序', '施工日期']], use_container_width=True)
+st.divider()
+
+st.markdown("### 🔍 歷史狀態查詢 (時光機)")
+df_history_plot = df_history_full.copy()
+pdf_report_date = datetime.date.today()
+selected_query_date = "最新進度 (預設)"
+
+if not df_history_full.empty:
+    unique_dates = sorted(df_history_full['施工日期'].dropna().unique(), reverse=True)
+    unique_dates.insert(0, "最新進度 (預設)")
+    selected_query_date = st.selectbox("選擇日期 (下方數據、地圖與報表將同步「時光倒流」至該日狀態)：", unique_dates, key="query_date_picker")
+    
+    if selected_query_date != "最新進度 (預設)":
+        target_dt = pd.to_datetime(selected_query_date)
+        pdf_report_date = target_dt.date()
+        df_history_plot = df_history_full[df_history_full['施工日期_DT'] <= target_dt].copy()
+        
+        df_date_filtered = df_history_full[df_history_full['施工日期'] == selected_query_date]
         q_a = len(df_date_filtered[df_date_filtered['機台'].astype(str).str.upper().str.contains('A')])
         q_b = len(df_date_filtered[df_date_filtered['機台'].astype(str).str.upper().str.contains('B')])
-        st.info(f"📅 {selected_query_date} 施作統計：共完工 {len(df_date_filtered)} 支 (A機：{q_a} 支，B機：{q_b} 支)")
-else:
-    st.caption("目前無施工明細資料可供查詢。")
+        st.info(f"📅 【{selected_query_date} 當日施作明細】 共 {len(df_date_filtered)} 支 (A機：{q_a} 支，B機：{q_b} 支)")
+        with st.expander("點擊展開當日打設清單"):
+            st.dataframe(df_date_filtered[['樁號', '機台', '施作順序', '施工日期']], use_container_width=True)
+
+total_done_auto = len(df_history_plot)
+total_perc = (total_done_auto / 613) * 100 if 613 > 0 else 0
+today_done_auto_a = 0
+today_done_auto_b = 0
+cum_done_a = 0
+cum_done_b = 0
+this_week_done_a = 0
+this_week_done_b = 0
+week_start_str = ""
+today_state_key = ""
+
+if not df_history_plot.empty:
+    latest_dt = df_history_plot['施工日期_DT'].max()
+    today_data = df_history_plot[df_history_plot['施工日期_DT'] == latest_dt]
+    today_done_auto_a = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('A')])
+    today_done_auto_b = len(today_data[today_data['機台'].astype(str).str.upper().str.contains('B')])
+    
+    cum_done_a = len(df_history_plot[df_history_plot['機台'].astype(str).str.upper().str.contains('A')])
+    cum_done_b = len(df_history_plot[df_history_plot['機台'].astype(str).str.upper().str.contains('B')])
+    
+    today_state_key = latest_dt.strftime('%m/%d')
+    monday = latest_dt - pd.Timedelta(days=latest_dt.weekday())
+    this_week_data = df_history_plot[df_history_plot['施工日期_DT'] >= monday]
+    
+    if not this_week_data.empty:
+        earliest_this_week = this_week_data['施工日期_DT'].min()
+        week_start_str = f"{earliest_this_week.year-1911}/{earliest_this_week.month:02d}/{earliest_this_week.day:02d}"
+        this_week_done_a = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('A')])
+        this_week_done_b = len(this_week_data[this_week_data['機台'].astype(str).str.upper().str.contains('B')])
+    else:
+        week_start_str = f"{monday.year-1911}/{monday.month:02d}/{monday.day:02d}"
+
+def process_status_logic(df_hist, df_b):
+    plot_df = df_b[['樁號', 'X', 'Y', '數字']].copy().sort_values('數字').reset_index(drop=True)
+    dx = plot_df['X'].diff().bfill(); dy = plot_df['Y'].diff().bfill()
+    dx_fwd = (plot_df['X'].shift(-1) - plot_df['X']).ffill(); dy_fwd = (plot_df['Y'].shift(-1) - plot_df['Y']).ffill()
+    plot_df['is_horizontal'] = (dx + dx_fwd).abs() >= (dy + dy_fwd).abs()
+    
+    if df_hist.empty:
+        plot_df['狀態'] = '未完成'; plot_df['標籤'] = plot_df['樁號']; plot_df['純順序'] = ""
+        return plot_df
+    
+    hist = df_hist.copy()
+    hist['標籤'] = hist.apply(lambda r: f"{r['樁號']}({str(r.get('機台','A'))[0]}{int(r.get('施作順序',0))})", axis=1)
+    hist['純順序'] = hist.apply(lambda r: f"({str(r.get('機台','A'))[0]}{int(r.get('施作順序',0))})", axis=1)
+    
+    max_date = hist['施工日期_DT'].max(); monday_dt = max_date - pd.Timedelta(days=max_date.weekday())
+    hist['狀態'] = hist['施工日期_DT'].apply(lambda dt: '未完成' if pd.isna(dt) else ('[已完成]' if dt < monday_dt else dt.strftime('%m/%d')))
+    
+    plot_df = plot_df.merge(hist[['樁號', '狀態', '標籤', '純順序']], on='樁號', how='left')
+    plot_df['狀態'] = plot_df['狀態'].fillna('未完成'); plot_df['標籤'] = plot_df['標籤'].fillna(plot_df['樁號']); plot_df['純順序'] = plot_df['純順序'].fillna("")
+    return plot_df
+
+df_p = process_status_logic(df_history_plot, df_base)
+
+def get_local_stats(sel_list, p_df):
+    if not sel_list: return 0, 0
+    sub = p_df[p_df['樁號'].isin(sel_list)]
+    total = len(sub)
+    done = len(sub[sub['狀態'] != '未完成'])
+    return done, total
+
+local_a_done, local_a_total = get_local_stats(st.session_state.sel_a, df_p)
+local_b_done, local_b_total = get_local_stats(st.session_state.sel_b, df_p)
 
 st.divider()
 fig_web = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成': '#696969', '[已完成]': '#FFB6C1'}, custom_data=['樁號'])
@@ -365,7 +376,7 @@ with c_btn3:
 
 st.info(f"當前 PDF 暫存狀態：A機截圖區包含 {len(st.session_state.sel_a)} 支樁 | B機截圖區包含 {len(st.session_state.sel_b)} 支樁")
 
-if not df_history.empty:
+if not df_history_plot.empty:
     st.sidebar.markdown("### 📄 PDF 報表文字內容")
     st.sidebar.text_input("右側主標題", key="pdf_loc_note_right")
     st.sidebar.text_input("左側副標題", key="pdf_loc_note_left")
@@ -431,7 +442,7 @@ if not df_history.empty:
             save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
     st.sidebar.markdown("### 📤 備份還原區")
-    excel_backup = st.sidebar.file_uploader("上傳 Excel 备份檔以覆蓋雲端", type=["xlsx"])
+    excel_backup = st.sidebar.file_uploader("上傳 Excel 備份檔以覆蓋雲端", type=["xlsx"])
     if excel_backup is not None:
         try:
             df_bk = pd.read_excel(excel_backup, sheet_name='施工明細')
@@ -529,27 +540,23 @@ if not df_history.empty:
                     ax_b.set_title("B機作業區", fontsize=40*fig_scale, fontweight='bold', y=-0.05)
                     ax_b.legend(loc='lower left', bbox_to_anchor=(pos_leg_x, pos_leg_y), fontsize=28*fig_scale, markerscale=1.5)
 
-            roc_y = datetime.date.today().year - 1911; today_roc = f"{roc_y}/{datetime.date.today().month:02d}/{datetime.date.today().day:02d}"
-            
-            latest_dt = pd.to_datetime(df_history['施工日期'], errors='coerce').max()
-            if pd.isna(latest_dt): latest_dt = datetime.date.today()
-            sunday = latest_dt + datetime.timedelta(days=(6 - latest_dt.weekday()))
-            week_end_str = f"{sunday.year-1911}/{sunday.month:02d}/{sunday.day:02d}"
+            roc_y = pdf_report_date.year - 1911
+            pdf_title_date = f"{roc_y}/{pdf_report_date.month:02d}/{pdf_report_date.day:02d}"
             
             a_pct_str = f" ({(local_a_done/local_a_total)*100:.2f}%)" if local_a_total > 0 else ""
             b_pct_str = f" ({(local_b_done/local_b_total)*100:.2f}%)" if local_b_total > 0 else ""
             
             info_lines = [
                 f"本週預計完成 {st.session_state.pdf_week_est} 支",
-                f"{week_start_str}至{week_end_str}",
+                f"{week_start_str}至{pdf_title_date}",
                 f"本週累積 A機:{this_week_done_a}支 B機:{this_week_done_b}支",
-                f"本日完成 A機:{today_done_auto_a}支 B機:{today_done_auto_b}支",
+                f"該日完成 A機:{today_done_auto_a}支 B機:{today_done_auto_b}支",
                 f"選取區 A機:{local_a_done}/{local_a_total}{a_pct_str}",
                 f"    B機:{local_b_done}/{local_b_total}{b_pct_str}",
                 f"總累積完成 {total_done_auto} 支 ({total_done_auto}/613, {total_perc:.2f}%)",
                 f"各別累積 A機:{cum_done_a}支 B機:{cum_done_b}支"
             ]
-            fig.text(0.05, pos_title_y, f"{today_roc} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
+            fig.text(0.05, pos_title_y, f"{pdf_title_date} 施作進度回報", fontsize=50 * fig_scale, fontweight='bold')
             fig.text(pos_info_x, pos_info_y, "\n".join(info_lines), fontsize=35 * fig_scale, linespacing=1.6, va='top')
             fig.text(pos_loc_x, pos_loc_y, st.session_state.pdf_loc_note_right, fontsize=55 * fig_scale, fontweight='bold', ha='center')
             fig.text(pos_loc_x_left, pos_loc_y_left, st.session_state.pdf_loc_note_left, fontsize=55 * fig_scale, fontweight='bold', ha='center')
@@ -560,7 +567,7 @@ if not df_history.empty:
         st.sidebar.markdown("### 📥 下載區")
         has_local_download = bool(st.session_state.sel_a) or bool(st.session_state.sel_b)
         pdf_btn_text = "🔴 匯出 PDF 報表 (局部圖)" if has_local_download else "🔴 匯出 PDF 報表 (全區圖)"
-        st.sidebar.download_button(pdf_btn_text, buf.getvalue(), f"Plan_{datetime.date.today()}.pdf", type="primary")
+        st.sidebar.download_button(pdf_btn_text, buf.getvalue(), f"Plan_{pdf_report_date}.pdf", type="primary")
 
     def xl_gen(h_df, p_df):
         out = io.BytesIO()
@@ -580,4 +587,4 @@ if not df_history.empty:
                 ch.add_series(sd); col += 4
             ch.set_x_axis({'visible': False}); ch.set_y_axis({'visible': False}); ws.insert_chart('B2', ch)
         return out.getvalue()
-    st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history, df_p), f"Report_{datetime.date.today()}.xlsx")
+    st.sidebar.download_button("🟢 匯出 Excel (全區報表)", xl_gen(df_history_plot, df_p), f"Report_{pdf_report_date}.xlsx")
