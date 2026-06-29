@@ -16,7 +16,7 @@ except ImportError:
     MATPLOTLIB_READY = False
 
 st.set_page_config(page_title="CDC結構預壘樁進度管理", layout="wide")
-st.title("🏗️ CDC結構預壘樁進度管理 (時光機報表連動版)")
+st.title("🏗️ CDC結構預壘樁進度管理 ")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
