@@ -15,8 +15,8 @@ try:
 except ImportError:
     MATPLOTLIB_READY = False
 
-st.set_page_config(page_title="UN023 排樁進度系統", layout="wide")
-st.title("🏗️ CDC 結構預壘樁進度管理")
+st.set_page_config(page_title="CDC結構預壘樁進度管理", layout="wide")
+st.title("🏗️ CDC結構預壘樁進度管理")
 
 if 'sel_a' not in st.session_state:
     st.session_state.sel_a = []
@@ -294,6 +294,20 @@ with t2:
                     elif pt.isdigit(): plist.append(f"P{pt}")
             process_and_save(plist)
 
+# 新增歷史日期查詢區塊
+st.markdown("### 🔍 歷史日期查詢")
+if not df_history.empty:
+    unique_dates = sorted(df_history['施工日期'].unique(), reverse=True)
+    selected_query_date = st.selectbox("選擇施工日期進行查詢", unique_dates, key="query_date_picker")
+    df_date_filtered = df_history[df_history['施工日期'] == selected_query_date]
+    if not df_date_filtered.empty:
+        st.dataframe(df_date_filtered[['樁號', '機台', '施作順序', '施工日期']], use_container_width=True)
+        q_a = len(df_date_filtered[df_date_filtered['機台'].astype(str).str.upper().str.contains('A')])
+        q_b = len(df_date_filtered[df_date_filtered['機台'].astype(str).str.upper().str.contains('B')])
+        st.info(f"📅 {selected_query_date} 施作統計：共完工 {len(df_date_filtered)} 支 (A機：{q_a} 支，B機：{q_b} 支)")
+else:
+    st.caption("目前無施工明細資料可供查詢。")
+
 st.divider()
 fig_web = px.scatter(df_p, x='X', y='Y', text='標籤', color='狀態', color_discrete_map={'未完成': '#696969', '[已完成]': '#FFB6C1'}, custom_data=['樁號'])
 fig_web.update_traces(selector=dict(name='未完成'), marker=dict(symbol='circle-open', size=16, line=dict(width=2, color='#A9A9A9')), textposition='top right')
@@ -417,7 +431,7 @@ if not df_history.empty:
             save_settings(ss, new_s); st.session_state.ui_settings = new_s; st.sidebar.success("✅ 設定已寫入雲端永久記憶")
 
     st.sidebar.markdown("### 📤 備份還原區")
-    excel_backup = st.sidebar.file_uploader("上傳 Excel 備份檔以覆蓋雲端", type=["xlsx"])
+    excel_backup = st.sidebar.file_uploader("上傳 Excel 备份檔以覆蓋雲端", type=["xlsx"])
     if excel_backup is not None:
         try:
             df_bk = pd.read_excel(excel_backup, sheet_name='施工明細')
